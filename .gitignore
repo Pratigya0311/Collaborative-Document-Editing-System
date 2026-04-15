@@ -1,0 +1,209 @@
+# ============================================
+# Root Level .gitignore
+# Location: collab-doc-system/.gitignore
+# ============================================
+
+# --------------------------------------------
+# OS Generated Files
+# --------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*~
+.lock
+desktop.ini
+
+# --------------------------------------------
+# IDE & Editor Configurations
+# --------------------------------------------
+.vscode/
+.idea/
+*.iml
+*.iws
+.idea/
+*.sublime-project
+*.sublime-workspace
+.code-workspace
+.history/
+*.code-workspace
+
+# --------------------------------------------
+# Python / Flask Backend
+# --------------------------------------------
+backend/venv/
+backend/env/
+backend/ENV/
+backend/env.bak/
+backend/venv.bak/
+backend/.venv/
+backend/.virtualenv/
+
+# Python cache
+backend/__pycache__/
+backend/*.py[cod]
+backend/*$py.class
+backend/*.so
+backend/.Python
+backend/*.egg-info/
+backend/dist/
+backend/build/
+backend/instance/
+backend/.webassets-cache
+backend/.pytest_cache/
+backend/.coverage
+backend/.coverage.*
+backend/htmlcov/
+backend/.tox/
+backend/.hypothesis/
+backend/*.log
+backend/*.pid
+
+# Environment Variables (CRITICAL: Contains SECRET_KEY, DB_PASSWORD)
+backend/.env
+backend/.env.local
+backend/.env.*.local
+
+# Database files (Never commit these)
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+backend/*.db-journal
+backend/*.db-wal
+backend/*.db-shm
+
+# Alembic (Keep migrations folder but ignore specific local config)
+# backend/migrations/versions/*.pyc
+
+# Flask specific
+backend/.flaskenv
+backend/instance/
+
+# Jupyter Notebooks (if any)
+backend/.ipynb_checkpoints/
+
+# --------------------------------------------
+# Node.js / React Frontend
+# --------------------------------------------
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/.pnpm-store/
+
+# Build output
+frontend/dist/
+frontend/dist-ssr/
+frontend/build/
+frontend/out/
+
+# Environment Variables (CRITICAL: Contains VITE_API_URL secrets)
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Logs
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+frontend/pnpm-debug.log*
+frontend/lerna-debug.log*
+
+# Editor directories and files
+frontend/.vscode/*
+!frontend/.vscode/extensions.json
+
+# Testing
+frontend/coverage/
+frontend/.nyc_output/
+
+# Temporary files
+frontend/*.log
+frontend/.eslintcache
+frontend/.stylelintcache
+
+# Lock files (Optional: Usually kept for consistency, but here if you want to ignore)
+# frontend/package-lock.json
+# frontend/yarn.lock
+
+# --------------------------------------------
+# Docker Related
+# --------------------------------------------
+# Data volumes (Never commit database data)
+data/
+postgres-data/
+pgdata/
+mysql-data/
+mongodb-data/
+
+# Docker environment overrides
+docker-compose.override.yml
+
+# --------------------------------------------
+# Secrets & Credentials
+# --------------------------------------------
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+.ssh/
+*.secret
+credentials.json
+service-account.json
+
+# --------------------------------------------
+# Backup & Archive Files
+# --------------------------------------------
+*.backup
+*.bak
+*.old
+*.orig
+*.tar.gz
+*.tgz
+*.zip
+*.rar
+*.7z
+
+# --------------------------------------------
+# System Monitoring / Performance
+# --------------------------------------------
+*.hprof
+*.cpuprofile
+*.heapsnapshot
+*.trace
+
+# --------------------------------------------
+# Temporary Files
+# --------------------------------------------
+tmp/
+temp/
+*.tmp
+*.temp
+~$*
+*.~
+
+# --------------------------------------------
+# Project Specific
+# --------------------------------------------
+# Uploaded files (User content - shouldn't be in git)
+uploads/
+media/
+documents_export/
+
+# Local configuration overrides
+local_settings.py
+local.yaml
+config.local.yml
+
+# Ignore any data dumps
+*.dump
+*.sql.gz
+*.sql.bz2
