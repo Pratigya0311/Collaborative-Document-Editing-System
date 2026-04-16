@@ -1,13 +1,17 @@
 import React from 'react';
 import { 
   FiBold, FiItalic, FiUnderline, 
-  FiList, FiSave, FiClock, FiShare2
+  FiList, FiSave, FiClock, FiShare2, FiGitCommit
+  , FiDownload
 } from 'react-icons/fi';
 import './Toolbar.css';
 
 const Toolbar = ({ 
   onSave, 
+  onSaveVersion,
+  onDownload,
   saving, 
+  savingVersion = false,
   lastSaved, 
   onFormat, 
   onShowHistory,
@@ -80,6 +84,25 @@ const Toolbar = ({
         >
           <FiSave />
           <span>{saving ? 'Saving...' : 'Save'}</span>
+        </button>
+
+        <button
+          className={`toolbar-btn version-save-btn ${savingVersion ? 'saving' : ''}`}
+          onClick={onSaveVersion}
+          disabled={savingVersion || !canEdit}
+          title="Save Version"
+        >
+          <FiGitCommit />
+          <span>{savingVersion ? 'Saving version...' : 'Save Version'}</span>
+        </button>
+
+        <button
+          className="toolbar-btn download-btn"
+          onClick={onDownload}
+          title="Download Document"
+        >
+          <FiDownload />
+          <span>Download</span>
         </button>
         
         {lastSaved && (

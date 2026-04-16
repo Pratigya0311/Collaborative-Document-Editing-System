@@ -20,11 +20,18 @@ export const documentsApi = {
   
   // Delete document
   delete: (docId) => client.delete(`/documents/${docId}`),
+  download: (docId) => client.get(`/documents/${docId}/download`, { responseType: 'blob' }),
 
   // Share document access with another registered user
   getCollaborators: (docId) => client.get(`/documents/${docId}/collaborators`),
   addCollaborator: (docId, email, permission = 'edit') =>
     client.post(`/documents/${docId}/collaborators`, { email, permission }),
+  updateCollaborator: (docId, collaboratorId, permission) =>
+    client.put(`/documents/${docId}/collaborators/${collaboratorId}`, { permission }),
+  removeCollaborator: (docId, collaboratorId) =>
+    client.delete(`/documents/${docId}/collaborators/${collaboratorId}`),
+  lockCollaboratorsToView: (docId) =>
+    client.post(`/documents/${docId}/collaborators/lock-view`),
 };
 
 export const versionsApi = {
@@ -44,6 +51,15 @@ export const versionsApi = {
   // Rollback to version
   rollback: (docId, versionId) => 
     client.post(`/versions/document/${docId}/rollback/${versionId}`),
+  deleteVersion: (versionId) => client.delete(`/versions/${versionId}`),
+
+  // Explicit commit-like saved version
+  saveVersion: (docId, content, baseVersionId = null, changeSummary = '') =>
+    client.post(`/versions/document/${docId}/save`, {
+      content,
+      base_version_id: baseVersionId,
+      change_summary: changeSummary
+    }),
 };
 
 export const authApi = {

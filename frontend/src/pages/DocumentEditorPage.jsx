@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import Toolbar from '../components/editor/Toolbar';
 import VersionDiffViewer from '../components/editor/VersionDiffViewer';
-import { documentsApi } from '../api/documents';
+import { documentsApi, versionsApi } from '../api/documents';
 import { useDocumentSocket } from '../hooks/useDocumentSocket';
 import { useDebouncedCallback } from '../hooks/useDebounce';
 import { formatRelativeTime } from '../lib/utils';
@@ -21,6 +21,7 @@ const DocumentEditorPage = () => {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingVersion, setSavingVersion] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
   const [currentVersionId, setCurrentVersionId] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
@@ -154,6 +155,55 @@ const DocumentEditorPage = () => {
   const handleManualSave = () => {
     saveDocument(content);
   };
+
+  const handleDownload = async () => {
+    try {
+      const response = await documentsApi.download(docId);
+      const blob = new Blob([response.data], { type: 'text/plain;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = window.document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${(document?.title || 'document').replace(/[^\w-]+/g, '_')}.txt`;
+      window.document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to download document:', error);
+      toast.error(error.response?.data?.message || 'Failed to download document');
+    }
+  };
+
+  const handleSaveVersion = async () => {
+    if (!canEdit) return;
+
+    const summary = window.prompt('Version message', 'Saved version');
+    if (summary === null) return;
+
+    setSavingVersion(true);
+    try {
+      const response = await versionsApi.saveVersion(
+        docId,
+        content,
+        currentVersionId,
+        summary.trim() || 'Saved version'
+      );
+
+      setCurrentVersionId(response.data.version_id);
+      setDocument((current) => ({
+        ...current,
+        content,
+        last_version_id: response.data.version_id
+      }));
+      setLastSaved(new Date());
+      toast.success('Version saved to history');
+    } catch (error) {
+      console.error('Failed to save version:', error);
+      toast.error(error.response?.data?.message || 'Failed to save version');
+    } finally {
+      setSavingVersion(false);
+    }
+  };
   
   const handleCursorChange = (e) => {
     const position = {
@@ -202,7 +252,7 @@ const DocumentEditorPage = () => {
   };
   
   const handleShowHistory = () => {
-    setShowHistory(true);
+    navigate(`/history/${docId}`);
   };
 
   const handleOpenShare = async () => {
@@ -243,6 +293,45 @@ const DocumentEditorPage = () => {
       setSharing(false);
     }
   };
+
+  const handleChangeCollaboratorPermission = async (collaboratorId, permission) => {
+    try {
+      const response = await documentsApi.updateCollaborator(docId, collaboratorId, permission);
+      setCollaborators((current) => current.map((person) => (
+        person.collaborator_id === collaboratorId ? response.data : person
+      )));
+      toast.success('Access updated');
+    } catch (error) {
+      console.error('Failed to update access:', error);
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to update access');
+    }
+  };
+
+  const handleRemoveCollaborator = async (collaboratorId) => {
+    if (!window.confirm('Remove this person from the document?')) return;
+
+    try {
+      await documentsApi.removeCollaborator(docId, collaboratorId);
+      setCollaborators((current) => current.filter((person) => person.collaborator_id !== collaboratorId));
+      toast.success('Access removed');
+    } catch (error) {
+      console.error('Failed to remove access:', error);
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to remove access');
+    }
+  };
+
+  const handleLockEveryoneToView = async () => {
+    if (!window.confirm('Set every shared person to view-only?')) return;
+
+    try {
+      const response = await documentsApi.lockCollaboratorsToView(docId);
+      setCollaborators(response.data);
+      toast.success('All shared users are now view-only');
+    } catch (error) {
+      console.error('Failed to lock access:', error);
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to lock access');
+    }
+  };
   
   if (loading) {
     return (
@@ -268,7 +357,10 @@ const DocumentEditorPage = () => {
           
           <Toolbar
             onSave={handleManualSave}
+            onSaveVersion={handleSaveVersion}
+            onDownload={handleDownload}
             saving={saving}
+            savingVersion={savingVersion}
             lastSaved={lastSaved ? formatRelativeTime(lastSaved) : null}
             onFormat={handleFormat}
             onShowHistory={handleShowHistory}
@@ -334,7 +426,7 @@ const DocumentEditorPage = () => {
           <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
             <div className="share-modal" onClick={(e) => e.stopPropagation()}>
               <div className="share-modal-header">
-                <h2>Share Document</h2>
+                <h2>Share and Access</h2>
                 <button
                   className="modal-close"
                   onClick={() => setShowShareModal(false)}
@@ -368,6 +460,16 @@ const DocumentEditorPage = () => {
                 </div>
               </form>
 
+              {canShare && collaborators.length > 0 && (
+                <button
+                  type="button"
+                  className="lock-view-btn"
+                  onClick={handleLockEveryoneToView}
+                >
+                  Set everyone to view-only
+                </button>
+              )}
+
               <div className="collaborators-list">
                 <h3>People with access</h3>
                 {collaborators.length === 0 ? (
@@ -379,7 +481,30 @@ const DocumentEditorPage = () => {
                         <strong>{person.user_name || person.user_email}</strong>
                         <span>{person.user_email}</span>
                       </div>
-                      <span className="permission-badge">{person.permission}</span>
+                      {canShare ? (
+                        <div className="access-actions">
+                          <select
+                            value={person.permission}
+                            onChange={(e) => handleChangeCollaboratorPermission(
+                              person.collaborator_id,
+                              e.target.value
+                            )}
+                          >
+                            <option value="view">Can view</option>
+                            <option value="edit">Can edit</option>
+                            <option value="owner">Owner</option>
+                          </select>
+                          <button
+                            type="button"
+                            className="remove-access-btn"
+                            onClick={() => handleRemoveCollaborator(person.collaborator_id)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="permission-badge">{person.permission}</span>
+                      )}
                     </div>
                   ))
                 )}

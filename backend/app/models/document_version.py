@@ -15,6 +15,7 @@ class DocumentVersion(db.Model):
     change_summary = db.Column(db.String(500))
     content_hash = db.Column(db.String(64), index=True)  # For quick diff detection
     parent_version_id = db.Column(db.Integer, db.ForeignKey('document_versions.version_id'))
+    is_saved_version = db.Column(db.Boolean, default=False, nullable=False, index=True)
     
     # Relationships
     parent_version = db.relationship('DocumentVersion', remote_side=[version_id], 
@@ -36,7 +37,8 @@ class DocumentVersion(db.Model):
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'version_number': self.version_number,
             'change_summary': self.change_summary,
-            'parent_version_id': self.parent_version_id
+            'parent_version_id': self.parent_version_id,
+            'is_saved_version': self.is_saved_version
         }
         
         if include_content:

@@ -180,6 +180,22 @@
   cursor: not-allowed;
 }
 
+.lock-view-btn {
+  width: 100%;
+  margin-top: 1rem;
+  height: 40px;
+  border: 1px solid #f59e0b;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #92400e;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.lock-view-btn:hover {
+  background: #fef3c7;
+}
+
 .collaborators-list {
   margin-top: 1.5rem;
 }
@@ -222,6 +238,33 @@
   color: #0369a1 !important;
   padding: 0.2rem 0.6rem;
   text-transform: capitalize;
+}
+
+.access-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.access-actions select {
+  height: 36px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0 0.5rem;
+}
+
+.remove-access-btn {
+  height: 36px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.remove-access-btn:hover {
+  background: #fee2e2;
 }
 
 @media (max-width: 720px) {

@@ -24,7 +24,10 @@ class DocumentSchema(SQLAlchemyAutoSchema):
     content = fields.Str(allow_none=True)
     created_at = fields.DateTime(dump_only=True)
     updated_at = fields.DateTime(dump_only=True)
-    owner_name = fields.Str(dump_only=True)
+    owner_name = fields.Method('get_owner_name', dump_only=True)
+
+    def get_owner_name(self, obj):
+        return obj.owner.name if getattr(obj, 'owner', None) else None
     
     @validates('title')
     def validate_title(self, value):
@@ -39,10 +42,14 @@ class DocumentVersionSchema(SQLAlchemyAutoSchema):
     
     version_id = fields.Int(dump_only=True)
     timestamp = fields.DateTime(dump_only=True)
-    editor_name = fields.Str(dump_only=True)
+    editor_name = fields.Method('get_editor_name', dump_only=True)
+    is_saved_version = fields.Bool(dump_only=True)
     
     # Exclude full content for list views
     content = fields.Str(required=False)
+
+    def get_editor_name(self, obj):
+        return obj.editor.name if getattr(obj, 'editor', None) else None
     
     class DocumentVersionListSchema(Schema):
         """Schema for listing versions without full content"""
@@ -63,8 +70,11 @@ class EditLogSchema(SQLAlchemyAutoSchema):
     
     log_id = fields.Int(dump_only=True)
     timestamp = fields.DateTime(dump_only=True)
-    user_name = fields.Str(dump_only=True)
+    user_name = fields.Method('get_user_name', dump_only=True)
     metadata = fields.Dict(allow_none=True)
+
+    def get_user_name(self, obj):
+        return obj.user.name if getattr(obj, 'user', None) else None
 
 class CreateDocumentRequest(Schema):
     """Request schema for creating a document"""

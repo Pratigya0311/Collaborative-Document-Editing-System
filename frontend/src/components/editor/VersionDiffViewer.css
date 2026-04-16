@@ -14,6 +14,18 @@
   z-index: 1000;
 }
 
+.version-diff-viewer.full-page {
+  position: static;
+  top: auto;
+  left: auto;
+  transform: none;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  min-height: calc(100vh - 220px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
 .diff-header {
   display: flex;
   align-items: center;
@@ -61,6 +73,7 @@
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
+  color: #1f2937;
 }
 
 .version-content pre {
@@ -70,6 +83,15 @@
   font-size: 14px;
   line-height: 1.6;
   margin: 0;
+  color: #111827;
+}
+
+.version-diff-viewer.full-page .diff-content {
+  padding: 2rem;
+}
+
+.version-diff-viewer.full-page .version-content pre {
+  min-height: calc(100vh - 360px);
 }
 
 .diff-lines {

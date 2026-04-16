@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS document_versions (
     version_number INTEGER NOT NULL,
     change_summary VARCHAR(500),
     content_hash VARCHAR(64),
-    parent_version_id INTEGER REFERENCES document_versions(version_id)
+    parent_version_id INTEGER REFERENCES document_versions(version_id),
+    is_saved_version BOOLEAN DEFAULT FALSE NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS edit_logs (
@@ -63,6 +64,7 @@ CREATE INDEX IF NOT EXISTS ix_document_versions_doc_id ON document_versions(doc_
 CREATE INDEX IF NOT EXISTS ix_document_versions_timestamp ON document_versions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_version_doc_timestamp ON document_versions(doc_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_version_hash ON document_versions(content_hash);
+CREATE INDEX IF NOT EXISTS ix_document_versions_is_saved_version ON document_versions(is_saved_version);
 CREATE INDEX IF NOT EXISTS ix_edit_logs_doc_id ON edit_logs(doc_id);
 CREATE INDEX IF NOT EXISTS ix_edit_logs_user_id ON edit_logs(user_id);
 CREATE INDEX IF NOT EXISTS ix_edit_logs_timestamp ON edit_logs(timestamp);

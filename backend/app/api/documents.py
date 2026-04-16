@@ -1,5 +1,5 @@
 """Document management endpoints"""
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, Response
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from sqlalchemy import or_
 import hashlib
@@ -58,7 +58,8 @@ def _serialize_document(document, user_id):
     permission = _document_permission(document, user_id)
     data['current_user_permission'] = permission
     data['can_edit'] = permission in ('edit', 'owner')
-    data['can_share'] = permission == 'owner'
+    data['can_share'] = _can_share_document(document, user_id)
+    data['is_real_owner'] = document.created_by == user_id
     return data
 
 @documents_bp.route('/', methods=['GET'])
@@ -109,27 +110,29 @@ def create_document():
         db.session.add(document)
         db.session.flush()
         
-        # Create initial version
-        version = DocumentVersion(
-            doc_id=document.doc_id,
-            content=document.content,
-            edited_by=current_user_id,
-            version_number=1,
-            change_summary='Initial version',
-            content_hash=hashlib.sha256(content.encode()).hexdigest()
-        )
-        
-        db.session.add(version)
-        db.session.flush()
-        
-        document.last_version_id = version.version_id
+        version = None
+        if content.strip():
+            version = DocumentVersion(
+                doc_id=document.doc_id,
+                content=document.content,
+                edited_by=current_user_id,
+                version_number=1,
+                change_summary='Initial version',
+                content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                is_saved_version=True
+            )
+            
+            db.session.add(version)
+            db.session.flush()
+            
+            document.last_version_id = version.version_id
         
         # Log creation
         log = EditLog(
             doc_id=document.doc_id,
             user_id=current_user_id,
             operation='INSERT',
-            version_id=version.version_id,
+            version_id=version.version_id if version else None,
             metadata_json={'action': 'document_created'}
         )
         
@@ -187,7 +190,8 @@ def update_document(doc_id):
             new_content=data['content'],
             base_version_id=data.get('base_version_id'),
             change_summary=data.get('change_summary', ''),
-            title=data.get('title')
+            title=data.get('title'),
+            is_saved_version=False
         )
         
         response_data = {
@@ -223,35 +227,76 @@ def update_document(doc_id):
 @documents_bp.route('/<int:doc_id>', methods=['DELETE'])
 @jwt_required()
 def delete_document(doc_id):
-    """Soft delete a document"""
+    """Delete document for everyone if real owner, otherwise remove current user's access only."""
     try:
         current_user_id = _current_user_id()
-        
+
         document = Document.query.filter_by(
             doc_id=doc_id,
-            created_by=current_user_id
+            is_deleted=False
         ).first()
-        
+
         if not document:
             return jsonify({'error': 'Document not found'}), 404
-        
-        document.is_deleted = True
-        
-        # Log deletion
-        log = EditLog(
-            doc_id=doc_id,
-            user_id=current_user_id,
-            operation='DELETE'
-        )
-        
-        db.session.add(log)
+
+        if document.created_by == current_user_id:
+            document.is_deleted = True
+            db.session.add(EditLog(
+                doc_id=doc_id,
+                user_id=current_user_id,
+                operation='DELETE',
+                metadata_json={'scope': 'global'}
+            ))
+            message = 'Document deleted for everyone'
+        else:
+            collaborator = DocumentCollaborator.query.filter_by(
+                doc_id=doc_id,
+                user_id=current_user_id
+            ).first()
+            if not collaborator:
+                return jsonify({'error': 'Document not found'}), 404
+
+            db.session.delete(collaborator)
+            db.session.add(EditLog(
+                doc_id=doc_id,
+                user_id=current_user_id,
+                operation='LEAVE_DOCUMENT',
+                metadata_json={'removed_user_id': current_user_id}
+            ))
+            message = 'Document removed from your account'
+
         db.session.commit()
-        
-        return jsonify({'message': 'Document deleted successfully'}), 200
+
+        return jsonify({'message': message}), 200
         
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to delete document', 'message': str(e)}), 400
+
+
+@documents_bp.route('/<int:doc_id>/download', methods=['GET'])
+@jwt_required()
+def download_document(doc_id):
+    """Download document as a plain text file."""
+    try:
+        current_user_id = _current_user_id()
+        document, allowed = _can_access_document(doc_id, current_user_id)
+
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        if not allowed:
+            return jsonify({'error': 'Access denied'}), 403
+
+        safe_title = ''.join(ch if ch.isalnum() or ch in ('-', '_') else '_' for ch in document.title).strip('_') or f'document_{doc_id}'
+        return Response(
+            document.content or '',
+            mimetype='text/plain',
+            headers={
+                'Content-Disposition': f'attachment; filename="{safe_title}.txt"'
+            }
+        )
+    except Exception as e:
+        return jsonify({'error': 'Failed to download document', 'message': str(e)}), 400
 
 
 @documents_bp.route('/<int:doc_id>/collaborators', methods=['GET'])
@@ -266,7 +311,10 @@ def get_collaborators(doc_id):
     if not allowed:
         return jsonify({'error': 'Access denied'}), 403
 
-    collaborators = DocumentCollaborator.query.filter_by(doc_id=doc_id).all()
+    collaborators = DocumentCollaborator.query.filter(
+        DocumentCollaborator.doc_id == doc_id,
+        DocumentCollaborator.user_id != current_user_id
+    ).all()
     return jsonify([collaborator.to_dict() for collaborator in collaborators]), 200
 
 
@@ -324,3 +372,117 @@ def add_collaborator(doc_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to add collaborator', 'message': str(e)}), 400
+
+
+@documents_bp.route('/<int:doc_id>/collaborators/<int:collaborator_id>', methods=['PUT'])
+@jwt_required()
+def update_collaborator(doc_id, collaborator_id):
+    """Change a collaborator permission. Any owner can do this, but the real owner remains unchanged."""
+    try:
+        current_user_id = _current_user_id()
+        document = Document.query.filter_by(doc_id=doc_id, is_deleted=False).first()
+
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        if _document_permission(document, current_user_id) != 'owner':
+            return jsonify({'error': 'Only owners can manage access'}), 403
+
+        data = request.get_json() or {}
+        permission = data.get('permission')
+        if permission not in ('view', 'edit', 'owner'):
+            return jsonify({'error': 'Invalid permission', 'message': 'Use view, edit, or owner'}), 400
+
+        collaborator = DocumentCollaborator.query.filter_by(
+            collaborator_id=collaborator_id,
+            doc_id=doc_id
+        ).first()
+        if not collaborator:
+            return jsonify({'error': 'Collaborator not found'}), 404
+        if collaborator.user_id == current_user_id:
+            return jsonify({'error': 'You cannot change your own access here'}), 400
+
+        collaborator.permission = permission
+        db.session.add(EditLog(
+            doc_id=doc_id,
+            user_id=current_user_id,
+            operation='ACCESS_UPDATE',
+            metadata_json={'collaborator_id': collaborator_id, 'permission': permission}
+        ))
+        db.session.commit()
+
+        return jsonify(collaborator.to_dict()), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update collaborator', 'message': str(e)}), 400
+
+
+@documents_bp.route('/<int:doc_id>/collaborators/<int:collaborator_id>', methods=['DELETE'])
+@jwt_required()
+def remove_collaborator(doc_id, collaborator_id):
+    """Remove a collaborator. Any owner can do this."""
+    try:
+        current_user_id = _current_user_id()
+        document = Document.query.filter_by(doc_id=doc_id, is_deleted=False).first()
+
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        if _document_permission(document, current_user_id) != 'owner':
+            return jsonify({'error': 'Only owners can manage access'}), 403
+
+        collaborator = DocumentCollaborator.query.filter_by(
+            collaborator_id=collaborator_id,
+            doc_id=doc_id
+        ).first()
+        if not collaborator:
+            return jsonify({'error': 'Collaborator not found'}), 404
+        if collaborator.user_id == current_user_id:
+            return jsonify({'error': 'You cannot remove your own access here'}), 400
+
+        removed_user_id = collaborator.user_id
+        db.session.delete(collaborator)
+        db.session.add(EditLog(
+            doc_id=doc_id,
+            user_id=current_user_id,
+            operation='ACCESS_REMOVE',
+            metadata_json={'removed_user_id': removed_user_id}
+        ))
+        db.session.commit()
+
+        return jsonify({'message': 'Collaborator removed'}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove collaborator', 'message': str(e)}), 400
+
+
+@documents_bp.route('/<int:doc_id>/collaborators/lock-view', methods=['POST'])
+@jwt_required()
+def lock_collaborators_to_view(doc_id):
+    """Set every collaborator to view-only. Any owner can do this."""
+    try:
+        current_user_id = _current_user_id()
+        document = Document.query.filter_by(doc_id=doc_id, is_deleted=False).first()
+
+        if not document:
+            return jsonify({'error': 'Document not found'}), 404
+        if _document_permission(document, current_user_id) != 'owner':
+            return jsonify({'error': 'Only owners can manage access'}), 403
+
+        collaborators = DocumentCollaborator.query.filter(
+            DocumentCollaborator.doc_id == doc_id,
+            DocumentCollaborator.user_id != current_user_id
+        ).all()
+        for collaborator in collaborators:
+            collaborator.permission = 'view'
+
+        db.session.add(EditLog(
+            doc_id=doc_id,
+            user_id=current_user_id,
+            operation='ACCESS_LOCK_VIEW',
+            metadata_json={'affected_collaborators': len(collaborators)}
+        ))
+        db.session.commit()
+
+        return jsonify([collaborator.to_dict() for collaborator in collaborators]), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to lock access', 'message': str(e)}), 400

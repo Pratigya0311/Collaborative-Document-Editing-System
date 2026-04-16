@@ -97,7 +97,8 @@
 }
 
 .view-btn,
-.restore-btn {
+.restore-btn,
+.delete-version-btn {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -133,6 +134,16 @@
 .restore-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.delete-version-btn {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #be123c;
+}
+
+.delete-version-btn:hover {
+  background: #ffe4e6;
 }
 
 .empty-state {

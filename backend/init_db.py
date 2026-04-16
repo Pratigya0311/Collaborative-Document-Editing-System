@@ -51,7 +51,8 @@ def seed_demo():
                 edited_by=user.user_id,
                 version_number=1,
                 change_summary='Seed demo document',
-                content_hash=hashlib.sha256(content.encode()).hexdigest()
+                content_hash=hashlib.sha256(content.encode()).hexdigest(),
+                is_saved_version=True
             )
             db.session.add(version)
             db.session.flush()

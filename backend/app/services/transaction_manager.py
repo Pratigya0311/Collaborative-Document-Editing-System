@@ -24,7 +24,8 @@ class TransactionManager:
         new_content: str, 
         base_version_id: Optional[int] = None,
         change_summary: str = "",
-        title: Optional[str] = None
+        title: Optional[str] = None,
+        is_saved_version: bool = False
     ) -> Tuple[DocumentVersion, Dict[str, Any]]:
         """
         Save a new document version with ACID guarantees.
@@ -83,7 +84,8 @@ class TransactionManager:
                 version_number=next_version_number,
                 change_summary=change_summary,
                 content_hash=content_hash,
-                parent_version_id=base_version_id
+                parent_version_id=base_version_id,
+                is_saved_version=is_saved_version
             )
             db.session.add(new_version)
             db.session.flush()
@@ -94,7 +96,7 @@ class TransactionManager:
             document.last_version_id = new_version.version_id
             document.updated_at = datetime.utcnow()
 
-            operation = 'MERGE' if conflict_info['detected'] else 'UPDATE'
+            operation = 'SAVE_VERSION' if is_saved_version else ('MERGE' if conflict_info['detected'] else 'UPDATE')
             log_entry = EditLog(
                 doc_id=doc_id,
                 user_id=user_id,
@@ -104,7 +106,8 @@ class TransactionManager:
                     'conflict_detected': conflict_info['detected'],
                     'conflict_resolved': conflict_info['resolved'],
                     'base_version': base_version_id,
-                    'new_version': new_version.version_id
+                    'new_version': new_version.version_id,
+                    'is_saved_version': is_saved_version
                 }
             )
             db.session.add(log_entry)
@@ -188,7 +191,8 @@ class TransactionManager:
             user_id=user_id,
             new_content=target_version.content,
             base_version_id=target_version.document.last_version_id,
-            change_summary=f"Rollback to version {version_id}"
+            change_summary=f"Rollback to saved version {version_id}",
+            is_saved_version=False
         )
 
         return new_version

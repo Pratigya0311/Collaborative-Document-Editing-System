@@ -52,6 +52,32 @@
   animation: pulse 1.5s ease-in-out infinite;
 }
 
+.version-save-btn {
+  background: #111827;
+  border-color: #111827;
+  color: white;
+}
+
+.version-save-btn:hover:not(:disabled) {
+  background: #374151;
+  border-color: #374151;
+}
+
+.version-save-btn.saving {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.download-btn {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: white;
+}
+
+.download-btn:hover:not(:disabled) {
+  background: #115e59;
+  border-color: #115e59;
+}
+
 .history-btn {
   background: white;
 }

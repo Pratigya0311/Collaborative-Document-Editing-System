@@ -58,13 +58,18 @@ const DashboardPage = () => {
   };
   
   const handleDeleteDocument = async (docId, title) => {
-    if (!window.confirm(`Are you sure you want to delete "${title}"?`)) {
+    const doc = documents.find((item) => item.doc_id === docId);
+    const prompt = doc?.is_real_owner
+      ? `Delete "${title}" for everyone?`
+      : `Remove "${title}" from your account?`;
+
+    if (!window.confirm(prompt)) {
       return;
     }
     
     try {
-      await documentsApi.delete(docId);
-      toast.success('Document deleted successfully');
+      const response = await documentsApi.delete(docId);
+      toast.success(response.data?.message || 'Document updated successfully');
       setDocuments(documents.filter(doc => doc.doc_id !== docId));
     } catch (error) {
       console.error('Failed to delete document:', error);
@@ -126,7 +131,7 @@ const DashboardPage = () => {
                     <button
                       className="action-btn delete"
                       onClick={() => handleDeleteDocument(doc.doc_id, doc.title)}
-                      title="Delete"
+                      title={doc.is_real_owner ? 'Delete for everyone' : 'Remove from my account'}
                     >
                       <FiTrash2 />
                     </button>

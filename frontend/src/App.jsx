@@ -8,6 +8,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import DocumentEditorPage from './pages/DocumentEditorPage'
 import VersionHistoryPage from './pages/VersionHistoryPage'
+import VersionViewPage from './pages/VersionViewPage'
 
 // Components
 import ProtectedRoute from './components/common/ProtectedRoute'
@@ -59,6 +60,12 @@ function App() {
           <Route path="/history/:docId" element={
             <ProtectedRoute>
               <VersionHistoryPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/history/:docId/view/:versionId" element={
+            <ProtectedRoute>
+              <VersionViewPage />
             </ProtectedRoute>
           } />
           
