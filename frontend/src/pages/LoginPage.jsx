@@ -117,17 +117,22 @@ const LoginPage = () => {
                 <FiLock className="input-icon" />
                 Password
               </label>
-              <input
-                type="password"
-                id="password"
+                <input
+                  type="password"
+                  id="password"
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                placeholder="Enter your password"
-                required
-                minLength="8"
-              />
-            </div>
+                  placeholder="Enter your password"
+                  required
+                  minLength="6"
+                />
+                {!isLogin && (
+                  <small className="password-help">
+                    Use at least 6 characters. Remember this password for login.
+                  </small>
+                )}
+              </div>
             
             {!isLogin && (
               <div className="form-group">
@@ -143,7 +148,7 @@ const LoginPage = () => {
                   onChange={handleChange}
                   placeholder="Confirm your password"
                   required={!isLogin}
-                  minLength="8"
+                  minLength="6"
                 />
               </div>
             )}

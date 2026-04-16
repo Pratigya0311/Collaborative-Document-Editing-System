@@ -12,7 +12,7 @@ class EditLog(db.Model):
     operation = db.Column(db.String(50), nullable=False)  # INSERT, UPDATE, DELETE, MERGE
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     version_id = db.Column(db.Integer, db.ForeignKey('document_versions.version_id'))
-    metadata = db.Column(db.JSON)  # Additional context (IP, user agent, etc.)
+    metadata_json = db.Column('metadata', db.JSON)  # Additional context (IP, user agent, etc.)
     
     # Composite index for user activity queries
     __table_args__ = (
@@ -29,7 +29,7 @@ class EditLog(db.Model):
             'operation': self.operation,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'version_id': self.version_id,
-            'metadata': self.metadata
+            'metadata': self.metadata_json
         }
     
     def __repr__(self):

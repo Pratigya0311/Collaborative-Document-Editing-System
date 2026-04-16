@@ -23,7 +23,8 @@ class TransactionManager:
         user_id: int, 
         new_content: str, 
         base_version_id: Optional[int] = None,
-        change_summary: str = ""
+        change_summary: str = "",
+        title: Optional[str] = None
     ) -> Tuple[DocumentVersion, Dict[str, Any]]:
         """
         Save a new document version with ACID guarantees.
@@ -41,88 +42,76 @@ class TransactionManager:
         conflict_info = {'detected': False, 'resolved': False, 'merge_strategy': 'none'}
         
         try:
-            # BEGIN TRANSACTION
-            with db.session.begin():
-                # ACID: Isolation - Pessimistic Locking
-                # SELECT FOR UPDATE locks the row for this transaction
-                document = Document.query.with_for_update().filter_by(
-                    doc_id=doc_id, 
-                    is_deleted=False
-                ).first()
-                
-                if not document:
-                    raise ValueError(f"Document {doc_id} not found")
-                
-                # Conflict Detection
-                current_content = document.content
-                current_version_id = document.last_version_id
-                
-                if base_version_id and base_version_id != current_version_id:
-                    conflict_info['detected'] = True
-                    
-                    # Attempt automatic merge
-                    merged_content, merge_success = self._attempt_merge(
-                        base_content=self._get_version_content(base_version_id),
-                        current_content=current_content,
-                        new_content=new_content
-                    )
-                    
-                    if merge_success:
-                        conflict_info['resolved'] = True
-                        conflict_info['merge_strategy'] = 'auto-merge'
-                        new_content = merged_content
-                    else:
-                        # Manual resolution required - create branch version
-                        conflict_info['merge_strategy'] = 'branch-created'
-                        # Still save as a branch (conflict not resolved automatically)
-                
-                # Calculate content hash for quick comparison
-                content_hash = hashlib.sha256(new_content.encode()).hexdigest()
-                
-                # Get next version number
-                latest_version = DocumentVersion.query.filter_by(doc_id=doc_id)\
-                    .order_by(DocumentVersion.version_number.desc()).first()
-                next_version_number = (latest_version.version_number + 1) if latest_version else 1
-                
-                # Create new version record
-                new_version = DocumentVersion(
-                    doc_id=doc_id,
-                    content=new_content,
-                    edited_by=user_id,
-                    version_number=next_version_number,
-                    change_summary=change_summary,
-                    content_hash=content_hash,
-                    parent_version_id=base_version_id
+            # ACID: Isolation - SELECT FOR UPDATE locks the row until commit.
+            document = Document.query.with_for_update().filter_by(
+                doc_id=doc_id,
+                is_deleted=False
+            ).first()
+
+            if not document:
+                raise ValueError(f"Document {doc_id} not found")
+
+            current_content = document.content
+            current_version_id = document.last_version_id
+
+            if base_version_id and base_version_id != current_version_id:
+                conflict_info['detected'] = True
+
+                merged_content, merge_success = self._attempt_merge(
+                    base_content=self._get_version_content(base_version_id),
+                    current_content=current_content,
+                    new_content=new_content
                 )
-                db.session.add(new_version)
-                db.session.flush()  # Get version_id
-                
-                # Update document with new content and version reference
-                document.content = new_content
-                document.last_version_id = new_version.version_id
-                document.updated_at = datetime.utcnow()
-                
-                # Create edit log entry
-                operation = 'MERGE' if conflict_info['detected'] else 'UPDATE'
-                log_entry = EditLog(
-                    doc_id=doc_id,
-                    user_id=user_id,
-                    operation=operation,
-                    version_id=new_version.version_id,
-                    metadata={
-                        'conflict_detected': conflict_info['detected'],
-                        'conflict_resolved': conflict_info['resolved'],
-                        'base_version': base_version_id,
-                        'new_version': new_version.version_id
-                    }
-                )
-                db.session.add(log_entry)
-                
-                # COMMIT - All or nothing
-                db.session.commit()
-                
-                return new_version, conflict_info
-                
+
+                if merge_success:
+                    conflict_info['resolved'] = True
+                    conflict_info['merge_strategy'] = 'auto-merge'
+                    new_content = merged_content
+                else:
+                    conflict_info['merge_strategy'] = 'branch-created'
+
+            content_hash = hashlib.sha256(new_content.encode()).hexdigest()
+
+            latest_version = DocumentVersion.query.filter_by(doc_id=doc_id)\
+                .order_by(DocumentVersion.version_number.desc()).first()
+            next_version_number = (latest_version.version_number + 1) if latest_version else 1
+
+            new_version = DocumentVersion(
+                doc_id=doc_id,
+                content=new_content,
+                edited_by=user_id,
+                version_number=next_version_number,
+                change_summary=change_summary,
+                content_hash=content_hash,
+                parent_version_id=base_version_id
+            )
+            db.session.add(new_version)
+            db.session.flush()
+
+            if title is not None:
+                document.title = title
+            document.content = new_content
+            document.last_version_id = new_version.version_id
+            document.updated_at = datetime.utcnow()
+
+            operation = 'MERGE' if conflict_info['detected'] else 'UPDATE'
+            log_entry = EditLog(
+                doc_id=doc_id,
+                user_id=user_id,
+                operation=operation,
+                version_id=new_version.version_id,
+                metadata_json={
+                    'conflict_detected': conflict_info['detected'],
+                    'conflict_resolved': conflict_info['resolved'],
+                    'base_version': base_version_id,
+                    'new_version': new_version.version_id
+                }
+            )
+            db.session.add(log_entry)
+            db.session.commit()
+
+            return new_version, conflict_info
+
         except SQLAlchemyError as e:
             # ACID: Atomicity - Rollback on error
             db.session.rollback()
@@ -186,29 +175,20 @@ class TransactionManager:
         Returns:
             New version object
         """
-        try:
-            with db.session.begin():
-                # Lock document
-                document = Document.query.with_for_update().filter_by(doc_id=doc_id).first()
-                
-                # Get target version
-                target_version = DocumentVersion.query.filter_by(
-                    doc_id=doc_id, 
-                    version_id=version_id
-                ).first()
-                
-                if not target_version:
-                    raise ValueError(f"Version {version_id} not found")
-                
-                # Create rollback version
-                return self.save_document_version(
-                    doc_id=doc_id,
-                    user_id=user_id,
-                    new_content=target_version.content,
-                    base_version_id=document.last_version_id,
-                    change_summary=f"Rollback to version {version_id}"
-                )[0]
-                
-        except SQLAlchemyError as e:
-            db.session.rollback()
-            raise Exception(f"Rollback failed: {str(e)}")
+        target_version = DocumentVersion.query.filter_by(
+            doc_id=doc_id,
+            version_id=version_id
+        ).first()
+
+        if not target_version:
+            raise ValueError(f"Version {version_id} not found")
+
+        new_version, _ = self.save_document_version(
+            doc_id=doc_id,
+            user_id=user_id,
+            new_content=target_version.content,
+            base_version_id=target_version.document.last_version_id,
+            change_summary=f"Rollback to version {version_id}"
+        )
+
+        return new_version

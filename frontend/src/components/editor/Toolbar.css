@@ -56,6 +56,17 @@
   background: white;
 }
 
+.share-btn {
+  background: #10b981;
+  border-color: #10b981;
+  color: white;
+}
+
+.share-btn:hover:not(:disabled) {
+  background: #059669;
+  border-color: #059669;
+}
+
 .save-status {
   margin-left: 1rem;
   font-size: 0.85rem;

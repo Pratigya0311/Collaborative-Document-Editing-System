@@ -25,6 +25,13 @@ const DocumentEditorPage = () => {
   const [currentVersionId, setCurrentVersionId] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState(null);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareEmail, setShareEmail] = useState('');
+  const [sharePermission, setSharePermission] = useState('edit');
+  const [sharing, setSharing] = useState(false);
+  const [collaborators, setCollaborators] = useState([]);
+  const canEdit = document?.can_edit !== false;
+  const canShare = document?.can_share === true;
   
   // WebSocket for real-time collaboration
   const { 
@@ -32,14 +39,44 @@ const DocumentEditorPage = () => {
     activeUsers, 
     cursors, 
     typingUsers,
+    latestRemoteSave,
+    latestRemoteDraft,
     sendCursorPosition,
-    sendTypingStatus 
+    sendTypingStatus,
+    sendContentChange
   } = useDocumentSocket(docId);
   
   // Load document
   useEffect(() => {
     loadDocument();
   }, [docId]);
+
+  useEffect(() => {
+    if (!latestRemoteSave) return;
+
+    if (String(latestRemoteSave.document_id) !== String(docId)) return;
+
+    setContent(latestRemoteSave.content || '');
+    setCurrentVersionId(latestRemoteSave.last_version_id || latestRemoteSave.version_id);
+    setDocument((current) => ({
+      ...current,
+      content: latestRemoteSave.content || '',
+      last_version_id: latestRemoteSave.last_version_id || latestRemoteSave.version_id,
+      updated_at: latestRemoteSave.updated_at || current?.updated_at
+    }));
+    toast(`${latestRemoteSave.user_name || 'Another user'} saved changes`, { duration: 2500 });
+  }, [latestRemoteSave]);
+
+  useEffect(() => {
+    if (!latestRemoteDraft) return;
+    if (String(latestRemoteDraft.document_id) !== String(docId)) return;
+
+    setContent(latestRemoteDraft.content || '');
+    setDocument((current) => ({
+      ...current,
+      content: latestRemoteDraft.content || ''
+    }));
+  }, [latestRemoteDraft]);
   
   const loadDocument = async () => {
     try {
@@ -62,6 +99,7 @@ const DocumentEditorPage = () => {
   }, 2000);
   
   const saveDocument = async (contentToSave) => {
+    if (!canEdit) return;
     if (!contentToSave || contentToSave === document?.content) return;
     
     setSaving(true);
@@ -83,6 +121,11 @@ const DocumentEditorPage = () => {
         await loadDocument();
       } else {
         setCurrentVersionId(response.data.version_id);
+        setDocument((current) => ({
+          ...current,
+          content: contentToSave,
+          last_version_id: response.data.version_id
+        }));
         setLastSaved(new Date());
         toast.success('Document saved', { duration: 1500 });
       }
@@ -96,10 +139,12 @@ const DocumentEditorPage = () => {
   
   const handleContentChange = (e) => {
     const newContent = e.target.value;
+    if (!canEdit) return;
     setContent(newContent);
     
     // Send typing status
     sendTypingStatus(true);
+    sendContentChange(newContent);
     setTimeout(() => sendTypingStatus(false), 1000);
     
     // Auto-save
@@ -120,6 +165,7 @@ const DocumentEditorPage = () => {
   
   const handleFormat = (format) => {
     const textarea = editorRef.current;
+    if (!canEdit) return;
     if (!textarea) return;
     
     const start = textarea.selectionStart;
@@ -158,6 +204,45 @@ const DocumentEditorPage = () => {
   const handleShowHistory = () => {
     setShowHistory(true);
   };
+
+  const handleOpenShare = async () => {
+    setShowShareModal(true);
+
+    try {
+      const response = await documentsApi.getCollaborators(docId);
+      setCollaborators(response.data);
+    } catch (error) {
+      console.error('Failed to load collaborators:', error);
+    }
+  };
+
+  const handleShareDocument = async (e) => {
+    e.preventDefault();
+    if (!shareEmail.trim()) return;
+
+    setSharing(true);
+    try {
+      const response = await documentsApi.addCollaborator(
+        docId,
+        shareEmail.trim(),
+        sharePermission
+      );
+
+      setCollaborators((current) => {
+        const withoutExisting = current.filter(
+          (item) => item.user_id !== response.data.user_id
+        );
+        return [...withoutExisting, response.data];
+      });
+      setShareEmail('');
+      toast.success('Document shared successfully');
+    } catch (error) {
+      console.error('Failed to share document:', error);
+      toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to share document');
+    } finally {
+      setSharing(false);
+    }
+  };
   
   if (loading) {
     return (
@@ -187,6 +272,9 @@ const DocumentEditorPage = () => {
             lastSaved={lastSaved ? formatRelativeTime(lastSaved) : null}
             onFormat={handleFormat}
             onShowHistory={handleShowHistory}
+            onShare={handleOpenShare}
+            canEdit={canEdit}
+            canShare={canShare}
           />
         </div>
         
@@ -200,7 +288,13 @@ const DocumentEditorPage = () => {
             onKeyUp={handleCursorChange}
             placeholder="Start typing..."
             spellCheck="false"
+            readOnly={!canEdit}
           />
+          {!canEdit && (
+            <div className="view-only-banner">
+              You have view access. Ask an owner for edit permission to make changes.
+            </div>
+          )}
           
           {/* Display other users' cursors */}
           {Object.entries(cursors).map(([userId, data]) => (
@@ -214,8 +308,8 @@ const DocumentEditorPage = () => {
               }}
             >
               <div className="cursor-label">
-                User {userId}
-                {typingUsers.has(parseInt(userId)) && ' is typing...'}
+                {data.user_name || `User ${userId}`}
+                {typingUsers.has(String(userId)) && ' is typing...'}
               </div>
             </div>
           ))}
@@ -234,6 +328,64 @@ const DocumentEditorPage = () => {
               }}
             />
           </>
+        )}
+
+        {showShareModal && (
+          <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
+            <div className="share-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="share-modal-header">
+                <h2>Share Document</h2>
+                <button
+                  className="modal-close"
+                  onClick={() => setShowShareModal(false)}
+                >
+                  x
+                </button>
+              </div>
+
+              <form onSubmit={handleShareDocument} className="share-form">
+                <label htmlFor="share-email">User email</label>
+                <div className="share-row">
+                  <input
+                    id="share-email"
+                    type="email"
+                    value={shareEmail}
+                    onChange={(e) => setShareEmail(e.target.value)}
+                    placeholder="friend@example.com"
+                    required
+                  />
+                  <select
+                    value={sharePermission}
+                    onChange={(e) => setSharePermission(e.target.value)}
+                  >
+                    <option value="edit">Can edit</option>
+                    <option value="view">Can view</option>
+                    <option value="owner">Owner</option>
+                  </select>
+                  <button type="submit" disabled={sharing}>
+                    {sharing ? 'Adding...' : 'Add'}
+                  </button>
+                </div>
+              </form>
+
+              <div className="collaborators-list">
+                <h3>People with access</h3>
+                {collaborators.length === 0 ? (
+                  <p className="empty-collaborators">No collaborators added yet.</p>
+                ) : (
+                  collaborators.map((person) => (
+                    <div key={person.collaborator_id} className="collaborator-item">
+                      <div>
+                        <strong>{person.user_name || person.user_email}</strong>
+                        <span>{person.user_email}</span>
+                      </div>
+                      <span className="permission-badge">{person.permission}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </DashboardLayout>

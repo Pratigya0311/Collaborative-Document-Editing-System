@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
-from ..models import Document, DocumentVersion
+from ..models import Document, DocumentVersion, DocumentCollaborator
 from ..services.transaction_manager import TransactionManager
 from ..services.diff_engine import DiffEngine
 from ..schemas.document_schema import DocumentVersionSchema
@@ -11,12 +11,30 @@ versions_bp = Blueprint('versions', __name__)
 transaction_manager = TransactionManager()
 diff_engine = DiffEngine()
 
+
+def _current_user_id():
+    return int(get_jwt_identity())
+
+
+def _can_access_document(document, user_id, require_edit=False):
+    if document.created_by == user_id:
+        return True
+
+    collaborator = DocumentCollaborator.query.filter_by(
+        doc_id=document.doc_id,
+        user_id=user_id
+    ).first()
+
+    if not collaborator:
+        return False
+    return not require_edit or collaborator.permission in ('edit', 'owner')
+
 @versions_bp.route('/document/<int:doc_id>', methods=['GET'])
 @jwt_required()
 def get_version_history(doc_id):
     """Get version history for a document"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = _current_user_id()
         
         # Verify document access
         document = Document.query.filter_by(
@@ -27,7 +45,7 @@ def get_version_history(doc_id):
         if not document:
             return jsonify({'error': 'Document not found'}), 404
         
-        if document.created_by != current_user_id:
+        if not _can_access_document(document, current_user_id):
             return jsonify({'error': 'Access denied'}), 403
         
         # Get pagination parameters
@@ -62,7 +80,7 @@ def get_version_history(doc_id):
 def get_version(version_id):
     """Get a specific version with full content"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = _current_user_id()
         
         version = DocumentVersion.query.get(version_id)
         
@@ -70,7 +88,7 @@ def get_version(version_id):
             return jsonify({'error': 'Version not found'}), 404
         
         # Verify document access
-        if version.document.created_by != current_user_id:
+        if not _can_access_document(version.document, current_user_id):
             return jsonify({'error': 'Access denied'}), 403
         
         schema = DocumentVersionSchema()
@@ -84,7 +102,7 @@ def get_version(version_id):
 def get_version_diff(version_id, compare_version_id):
     """Get diff between two versions"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = _current_user_id()
         
         version1 = DocumentVersion.query.get(version_id)
         version2 = DocumentVersion.query.get(compare_version_id)
@@ -96,7 +114,7 @@ def get_version_diff(version_id, compare_version_id):
             return jsonify({'error': 'Versions belong to different documents'}), 400
         
         # Verify access
-        if version1.document.created_by != current_user_id:
+        if not _can_access_document(version1.document, current_user_id):
             return jsonify({'error': 'Access denied'}), 403
         
         # Generate diff
@@ -130,7 +148,7 @@ def get_version_diff(version_id, compare_version_id):
 def rollback_to_version(doc_id, version_id):
     """Rollback document to a previous version"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = _current_user_id()
         
         # Verify document access
         document = Document.query.filter_by(
@@ -141,7 +159,7 @@ def rollback_to_version(doc_id, version_id):
         if not document:
             return jsonify({'error': 'Document not found'}), 404
         
-        if document.created_by != current_user_id:
+        if not _can_access_document(document, current_user_id, require_edit=True):
             return jsonify({'error': 'Access denied'}), 403
         
         # Perform rollback

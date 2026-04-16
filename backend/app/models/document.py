@@ -20,6 +20,8 @@ class Document(db.Model):
                               cascade='all, delete-orphan')
     edit_logs = db.relationship('EditLog', backref='document', lazy='dynamic', 
                                cascade='all, delete-orphan')
+    collaborators = db.relationship('DocumentCollaborator', backref='document', lazy='dynamic',
+                                    cascade='all, delete-orphan')
     
     # Indexes for performance
     __table_args__ = (

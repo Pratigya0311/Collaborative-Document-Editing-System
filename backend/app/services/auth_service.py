@@ -24,17 +24,8 @@ class AuthService:
         Returns:
             Tuple of (is_valid, message)
         """
-        if len(password) < 8:
-            return False, "Password must be at least 8 characters long"
-        
-        if not re.search(r'[A-Z]', password):
-            return False, "Password must contain at least one uppercase letter"
-        
-        if not re.search(r'[a-z]', password):
-            return False, "Password must contain at least one lowercase letter"
-        
-        if not re.search(r'\d', password):
-            return False, "Password must contain at least one number"
+        if len(password) < 6:
+            return False, "Password must be at least 6 characters long"
         
         return True, "Password is valid"
     
@@ -50,6 +41,8 @@ class AuthService:
         Returns:
             Tuple of (user, error_message)
         """
+        email = email.strip().lower()
+
         # Validate email
         if not self.validate_email(email):
             return None, "Invalid email format"
@@ -68,7 +61,7 @@ class AuthService:
             # Create new user
             user = User(
                 name=name,
-                email=email.lower(),
+                email=email,
                 created_at=datetime.utcnow()
             )
             user.set_password(password)
@@ -113,15 +106,16 @@ class AuthService:
         Returns:
             Dictionary with access_token and refresh_token
         """
+        identity = str(user.user_id)
         access_token = create_access_token(
-            identity=user.user_id,
+            identity=identity,
             additional_claims={
                 'email': user.email,
                 'name': user.name
             }
         )
         
-        refresh_token = create_refresh_token(identity=user.user_id)
+        refresh_token = create_refresh_token(identity=identity)
         
         return {
             'access_token': access_token,

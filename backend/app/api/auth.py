@@ -67,7 +67,7 @@ def login():
 def refresh():
     """Refresh access token"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = int(get_jwt_identity())
         access_token = create_access_token(identity=current_user_id)
         
         return jsonify({'access_token': access_token}), 200
@@ -80,7 +80,7 @@ def refresh():
 def get_current_user():
     """Get current user information"""
     try:
-        current_user_id = get_jwt_identity()
+        current_user_id = int(get_jwt_identity())
         user = auth_service.get_user_by_id(current_user_id)
         
         if not user:

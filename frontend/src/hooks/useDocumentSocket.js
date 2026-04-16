@@ -10,6 +10,8 @@ export const useDocumentSocket = (docId) => {
   const [activeUsers, setActiveUsers] = useState(0);
   const [cursors, setCursors] = useState({});
   const [typingUsers, setTypingUsers] = useState(new Set());
+  const [latestRemoteSave, setLatestRemoteSave] = useState(null);
+  const [latestRemoteDraft, setLatestRemoteDraft] = useState(null);
   
   const socketRef = useRef(null);
   
@@ -59,6 +61,7 @@ export const useDocumentSocket = (docId) => {
       setCursors(prev => ({
         ...prev,
         [data.user_id]: {
+          user_name: data.user_name,
           position: data.position,
           selection: data.selection,
           timestamp: Date.now()
@@ -70,12 +73,24 @@ export const useDocumentSocket = (docId) => {
       setTypingUsers(prev => {
         const newSet = new Set(prev);
         if (data.is_typing) {
-          newSet.add(data.user_id);
+          newSet.add(String(data.user_id));
         } else {
-          newSet.delete(data.user_id);
+          newSet.delete(String(data.user_id));
         }
         return newSet;
       });
+    });
+
+    socket.on('document_saved', (data) => {
+      if (data.user_id !== user.user_id) {
+        setLatestRemoteSave(data);
+      }
+    });
+
+    socket.on('content_update', (data) => {
+      if (String(data.user_id) !== String(user.user_id)) {
+        setLatestRemoteDraft(data);
+      }
     });
     
     return () => {
@@ -102,13 +117,25 @@ export const useDocumentSocket = (docId) => {
       });
     }
   };
+
+  const sendContentChange = (content) => {
+    if (socketRef.current && connected) {
+      socketRef.current.emit('content_change', {
+        document_id: docId,
+        content
+      });
+    }
+  };
   
   return {
     connected,
     activeUsers,
     cursors,
     typingUsers,
+    latestRemoteSave,
+    latestRemoteDraft,
     sendCursorPosition,
-    sendTypingStatus
+    sendTypingStatus,
+    sendContentChange
   };
 };

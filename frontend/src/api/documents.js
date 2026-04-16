@@ -20,6 +20,11 @@ export const documentsApi = {
   
   // Delete document
   delete: (docId) => client.delete(`/documents/${docId}`),
+
+  // Share document access with another registered user
+  getCollaborators: (docId) => client.get(`/documents/${docId}/collaborators`),
+  addCollaborator: (docId, email, permission = 'edit') =>
+    client.post(`/documents/${docId}/collaborators`, { email, permission }),
 };
 
 export const versionsApi = {

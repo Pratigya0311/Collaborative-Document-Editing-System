@@ -19,6 +19,13 @@ class User(db.Model):
     documents = db.relationship('Document', backref='owner', lazy='dynamic', cascade='all, delete-orphan')
     versions = db.relationship('DocumentVersion', backref='editor', lazy='dynamic')
     edit_logs = db.relationship('EditLog', backref='user', lazy='dynamic')
+    collaborations = db.relationship(
+        'DocumentCollaborator',
+        foreign_keys='DocumentCollaborator.user_id',
+        backref='user',
+        lazy='dynamic',
+        cascade='all, delete-orphan',
+    )
     
     def set_password(self, password):
         """Hash and set user password"""

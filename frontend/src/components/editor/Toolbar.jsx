@@ -1,7 +1,7 @@
 import React from 'react';
 import { 
   FiBold, FiItalic, FiUnderline, 
-  FiList, FiSave, FiClock 
+  FiList, FiSave, FiClock, FiShare2
 } from 'react-icons/fi';
 import './Toolbar.css';
 
@@ -10,7 +10,10 @@ const Toolbar = ({
   saving, 
   lastSaved, 
   onFormat, 
-  onShowHistory 
+  onShowHistory,
+  onShare,
+  canEdit = true,
+  canShare = false
 }) => {
   return (
     <div className="editor-toolbar">
@@ -18,6 +21,7 @@ const Toolbar = ({
         <button 
           className="toolbar-btn" 
           onClick={() => onFormat('bold')}
+          disabled={!canEdit}
           title="Bold"
         >
           <FiBold />
@@ -25,6 +29,7 @@ const Toolbar = ({
         <button 
           className="toolbar-btn" 
           onClick={() => onFormat('italic')}
+          disabled={!canEdit}
           title="Italic"
         >
           <FiItalic />
@@ -32,6 +37,7 @@ const Toolbar = ({
         <button 
           className="toolbar-btn" 
           onClick={() => onFormat('underline')}
+          disabled={!canEdit}
           title="Underline"
         >
           <FiUnderline />
@@ -39,6 +45,7 @@ const Toolbar = ({
         <button 
           className="toolbar-btn" 
           onClick={() => onFormat('bullet')}
+          disabled={!canEdit}
           title="Bullet List"
         >
           <FiList />
@@ -54,11 +61,22 @@ const Toolbar = ({
           <FiClock />
           <span>History</span>
         </button>
+
+        {canShare && (
+          <button
+            className="toolbar-btn share-btn"
+            onClick={onShare}
+            title="Share Document"
+          >
+            <FiShare2 />
+            <span>Share</span>
+          </button>
+        )}
         
         <button 
           className={`toolbar-btn save-btn ${saving ? 'saving' : ''}`}
           onClick={onSave}
-          disabled={saving}
+          disabled={saving || !canEdit}
         >
           <FiSave />
           <span>{saving ? 'Saving...' : 'Save'}</span>

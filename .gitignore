@@ -46,6 +46,8 @@ backend/.virtualenv/
 
 # Python cache
 backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
 backend/*.py[cod]
 backend/*$py.class
 backend/*.so
