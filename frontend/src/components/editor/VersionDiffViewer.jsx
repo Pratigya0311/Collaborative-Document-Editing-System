@@ -41,7 +41,7 @@ const VersionDiffViewer = ({ docId, versionId, onClose, initialVersion = null, f
 
       <div className="diff-content">
         <div className="version-content">
-          <pre>{version.content}</pre>
+          <div dangerouslySetInnerHTML={{ __html: version.content || '' }} />
         </div>
       </div>
 

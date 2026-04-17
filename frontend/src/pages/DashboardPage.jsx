@@ -15,6 +15,11 @@ const DashboardPage = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newDocTitle, setNewDocTitle] = useState('');
   const [creating, setCreating] = useState(false);
+
+  const getPreviewText = (html) => {
+    const plainText = (html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    return plainText;
+  };
   
   useEffect(() => {
     loadDocuments();
@@ -139,8 +144,8 @@ const DashboardPage = () => {
                 </div>
                 
                 <div className="document-preview">
-                  {doc.content ? (
-                    <p>{doc.content.substring(0, 150)}...</p>
+                  {getPreviewText(doc.content) ? (
+                    <p>{getPreviewText(doc.content).substring(0, 150)}...</p>
                   ) : (
                     <p className="empty-preview">Empty document</p>
                   )}

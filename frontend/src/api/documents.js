@@ -69,3 +69,7 @@ export const authApi = {
   getCurrentUser: () => client.get('/auth/me'),
   refreshToken: () => client.post('/auth/refresh'),
 };
+
+export const logsApi = {
+  getRecent: (limit = 5) => client.get('/logs/', { params: { limit } }),
+};

@@ -16,6 +16,7 @@ const Toolbar = ({
   onFormat, 
   onShowHistory,
   onShare,
+  activeFormats = {},
   canEdit = true,
   canShare = false
 }) => {
@@ -23,34 +24,38 @@ const Toolbar = ({
     <div className="editor-toolbar">
       <div className="toolbar-group">
         <button 
-          className="toolbar-btn" 
+          className={`toolbar-btn ${activeFormats.bold ? 'active' : ''}`}
           onClick={() => onFormat('bold')}
           disabled={!canEdit}
           title="Bold"
+          aria-pressed={activeFormats.bold}
         >
           <FiBold />
         </button>
         <button 
-          className="toolbar-btn" 
+          className={`toolbar-btn ${activeFormats.italic ? 'active' : ''}`}
           onClick={() => onFormat('italic')}
           disabled={!canEdit}
           title="Italic"
+          aria-pressed={activeFormats.italic}
         >
           <FiItalic />
         </button>
         <button 
-          className="toolbar-btn" 
+          className={`toolbar-btn ${activeFormats.underline ? 'active' : ''}`}
           onClick={() => onFormat('underline')}
           disabled={!canEdit}
           title="Underline"
+          aria-pressed={activeFormats.underline}
         >
           <FiUnderline />
         </button>
         <button 
-          className="toolbar-btn" 
+          className={`toolbar-btn ${activeFormats.bullet ? 'active' : ''}`}
           onClick={() => onFormat('bullet')}
           disabled={!canEdit}
           title="Bullet List"
+          aria-pressed={activeFormats.bullet}
         >
           <FiList />
         </button>

@@ -1,13 +1,11 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import Toolbar from '../components/editor/Toolbar';
-import VersionDiffViewer from '../components/editor/VersionDiffViewer';
 import { documentsApi, versionsApi } from '../api/documents';
 import { useDocumentSocket } from '../hooks/useDocumentSocket';
 import { useDebouncedCallback } from '../hooks/useDebounce';
 import { formatRelativeTime } from '../lib/utils';
-import diffEngine from '../lib/diffEngine';
 import Spinner from '../components/common/Spinner';
 import toast from 'react-hot-toast';
 import './DocumentEditorPage.css';
@@ -16,29 +14,32 @@ const DocumentEditorPage = () => {
   const { docId } = useParams();
   const navigate = useNavigate();
   const editorRef = useRef(null);
-  
-  const [document, setDocument] = useState(null);
+
+  const [documentData, setDocumentData] = useState(null);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingVersion, setSavingVersion] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
   const [currentVersionId, setCurrentVersionId] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [selectedVersionId, setSelectedVersionId] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
   const [sharePermission, setSharePermission] = useState('edit');
   const [sharing, setSharing] = useState(false);
   const [collaborators, setCollaborators] = useState([]);
-  const canEdit = document?.can_edit !== false;
-  const canShare = document?.can_share === true;
-  
-  // WebSocket for real-time collaboration
-  const { 
-    connected, 
-    activeUsers, 
-    cursors, 
+  const [activeFormats, setActiveFormats] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    bullet: false
+  });
+  const canEdit = documentData?.can_edit !== false;
+  const canShare = documentData?.can_share === true;
+
+  const {
+    connected,
+    activeUsers,
+    cursors,
     typingUsers,
     latestRemoteSave,
     latestRemoteDraft,
@@ -46,45 +47,103 @@ const DocumentEditorPage = () => {
     sendTypingStatus,
     sendContentChange
   } = useDocumentSocket(docId);
-  
-  // Load document
+
+  const syncEditorHtml = (html) => {
+    if (!editorRef.current) return;
+    if (editorRef.current.innerHTML !== (html || '')) {
+      editorRef.current.innerHTML = html || '';
+    }
+  };
+
+  const updateActiveFormats = () => {
+    if (!editorRef.current) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      setActiveFormats({
+        bold: false,
+        italic: false,
+        underline: false,
+        bullet: false
+      });
+      return;
+    }
+
+    const anchorNode = selection.anchorNode;
+    if (!anchorNode || !editorRef.current.contains(anchorNode)) {
+      setActiveFormats({
+        bold: false,
+        italic: false,
+        underline: false,
+        bullet: false
+      });
+      return;
+    }
+
+    setActiveFormats({
+      bold: Boolean(document.queryCommandState('bold')),
+      italic: Boolean(document.queryCommandState('italic')),
+      underline: Boolean(document.queryCommandState('underline')),
+      bullet: Boolean(document.queryCommandState('insertUnorderedList'))
+    });
+  };
+
   useEffect(() => {
     loadDocument();
   }, [docId]);
 
   useEffect(() => {
-    if (!latestRemoteSave) return;
+    const handleSelectionChange = () => {
+      updateActiveFormats();
+    };
 
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    syncEditorHtml(content);
+  }, [loading]);
+
+  useEffect(() => {
+    if (!latestRemoteSave) return;
     if (String(latestRemoteSave.document_id) !== String(docId)) return;
 
-    setContent(latestRemoteSave.content || '');
+    const nextContent = latestRemoteSave.content || '';
+    setContent(nextContent);
+    syncEditorHtml(nextContent);
     setCurrentVersionId(latestRemoteSave.last_version_id || latestRemoteSave.version_id);
-    setDocument((current) => ({
+    setDocumentData((current) => ({
       ...current,
-      content: latestRemoteSave.content || '',
+      content: nextContent,
       last_version_id: latestRemoteSave.last_version_id || latestRemoteSave.version_id,
       updated_at: latestRemoteSave.updated_at || current?.updated_at
     }));
     toast(`${latestRemoteSave.user_name || 'Another user'} saved changes`, { duration: 2500 });
-  }, [latestRemoteSave]);
+  }, [latestRemoteSave, docId]);
 
   useEffect(() => {
     if (!latestRemoteDraft) return;
     if (String(latestRemoteDraft.document_id) !== String(docId)) return;
 
-    setContent(latestRemoteDraft.content || '');
-    setDocument((current) => ({
+    const nextContent = latestRemoteDraft.content || '';
+    setContent(nextContent);
+    syncEditorHtml(nextContent);
+    setDocumentData((current) => ({
       ...current,
-      content: latestRemoteDraft.content || ''
+      content: nextContent
     }));
-  }, [latestRemoteDraft]);
-  
+  }, [latestRemoteDraft, docId]);
+
   const loadDocument = async () => {
     try {
       const response = await documentsApi.getById(docId);
-      setDocument(response.data);
+      setDocumentData(response.data);
       setContent(response.data.content || '');
       setCurrentVersionId(response.data.last_version_id);
+      syncEditorHtml(response.data.content || '');
     } catch (error) {
       console.error('Failed to load document:', error);
       toast.error('Failed to load document');
@@ -93,16 +152,15 @@ const DocumentEditorPage = () => {
       setLoading(false);
     }
   };
-  
-  // Auto-save with debounce
+
   const debouncedSave = useDebouncedCallback(async (newContent) => {
     await saveDocument(newContent);
   }, 2000);
-  
+
   const saveDocument = async (contentToSave) => {
     if (!canEdit) return;
-    if (!contentToSave || contentToSave === document?.content) return;
-    
+    if (contentToSave === documentData?.content) return;
+
     setSaving(true);
     try {
       const response = await documentsApi.update(
@@ -111,18 +169,13 @@ const DocumentEditorPage = () => {
         currentVersionId,
         'Auto-save'
       );
-      
-      // Handle conflict
+
       if (response.status === 409) {
-        toast.warning('Conflict detected. Merging changes...', {
-          duration: 5000
-        });
-        
-        // Reload document to get merged version
+        toast.warning('Conflict detected. Merging changes...', { duration: 5000 });
         await loadDocument();
       } else {
         setCurrentVersionId(response.data.version_id);
-        setDocument((current) => ({
+        setDocumentData((current) => ({
           ...current,
           content: contentToSave,
           last_version_id: response.data.version_id
@@ -137,21 +190,18 @@ const DocumentEditorPage = () => {
       setSaving(false);
     }
   };
-  
+
   const handleContentChange = (e) => {
-    const newContent = e.target.value;
     if (!canEdit) return;
+
+    const newContent = e.currentTarget.innerHTML;
     setContent(newContent);
-    
-    // Send typing status
     sendTypingStatus(true);
     sendContentChange(newContent);
     setTimeout(() => sendTypingStatus(false), 1000);
-    
-    // Auto-save
     debouncedSave(newContent);
   };
-  
+
   const handleManualSave = () => {
     saveDocument(content);
   };
@@ -163,7 +213,7 @@ const DocumentEditorPage = () => {
       const url = window.URL.createObjectURL(blob);
       const anchor = window.document.createElement('a');
       anchor.href = url;
-      anchor.download = `${(document?.title || 'document').replace(/[^\w-]+/g, '_')}.txt`;
+      anchor.download = `${(documentData?.title || 'document').replace(/[^\w-]+/g, '_')}.txt`;
       window.document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -190,7 +240,7 @@ const DocumentEditorPage = () => {
       );
 
       setCurrentVersionId(response.data.version_id);
-      setDocument((current) => ({
+      setDocumentData((current) => ({
         ...current,
         content,
         last_version_id: response.data.version_id
@@ -204,53 +254,48 @@ const DocumentEditorPage = () => {
       setSavingVersion(false);
     }
   };
-  
-  const handleCursorChange = (e) => {
-    const position = {
-      selectionStart: e.target.selectionStart,
-      selectionEnd: e.target.selectionEnd
-    };
-    sendCursorPosition(position);
+
+  const handleCursorChange = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const range = selection.getRangeAt(0);
+    sendCursorPosition({
+      selectionStart: range.startOffset,
+      selectionEnd: range.endOffset
+    });
+    updateActiveFormats();
   };
-  
+
   const handleFormat = (format) => {
-    const textarea = editorRef.current;
-    if (!canEdit) return;
-    if (!textarea) return;
-    
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const selectedText = content.substring(start, end);
-    
-    let formattedText = '';
+    if (!canEdit || !editorRef.current) return;
+
+    editorRef.current.focus();
+
     switch (format) {
       case 'bold':
-        formattedText = `**${selectedText}**`;
+        document.execCommand('bold');
         break;
       case 'italic':
-        formattedText = `*${selectedText}*`;
+        document.execCommand('italic');
         break;
       case 'underline':
-        formattedText = `__${selectedText}__`;
+        document.execCommand('underline');
         break;
       case 'bullet':
-        formattedText = selectedText.split('\n').map(line => `• ${line}`).join('\n');
+        document.execCommand('insertUnorderedList');
         break;
       default:
         return;
     }
-    
-    const newContent = content.substring(0, start) + formattedText + content.substring(end);
+
+    const newContent = editorRef.current.innerHTML;
     setContent(newContent);
+    sendContentChange(newContent);
     debouncedSave(newContent);
-    
-    // Restore cursor position
-    setTimeout(() => {
-      textarea.focus();
-      textarea.setSelectionRange(start, start + formattedText.length);
-    }, 0);
+    updateActiveFormats();
   };
-  
+
   const handleShowHistory = () => {
     navigate(`/history/${docId}`);
   };
@@ -272,16 +317,9 @@ const DocumentEditorPage = () => {
 
     setSharing(true);
     try {
-      const response = await documentsApi.addCollaborator(
-        docId,
-        shareEmail.trim(),
-        sharePermission
-      );
-
+      const response = await documentsApi.addCollaborator(docId, shareEmail.trim(), sharePermission);
       setCollaborators((current) => {
-        const withoutExisting = current.filter(
-          (item) => item.user_id !== response.data.user_id
-        );
+        const withoutExisting = current.filter((item) => item.user_id !== response.data.user_id);
         return [...withoutExisting, response.data];
       });
       setShareEmail('');
@@ -332,7 +370,7 @@ const DocumentEditorPage = () => {
       toast.error(error.response?.data?.message || error.response?.data?.error || 'Failed to lock access');
     }
   };
-  
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -342,19 +380,19 @@ const DocumentEditorPage = () => {
       </DashboardLayout>
     );
   }
-  
+
   return (
     <DashboardLayout>
       <div className="editor-page">
         <div className="editor-header">
           <div className="document-title-section">
-            <h1>{document?.title}</h1>
+            <h1>{documentData?.title}</h1>
             <div className="connection-status">
               <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`}></span>
               <span>{connected ? `${activeUsers} active user${activeUsers !== 1 ? 's' : ''}` : 'Disconnected'}</span>
             </div>
           </div>
-          
+
           <Toolbar
             onSave={handleManualSave}
             onSaveVersion={handleSaveVersion}
@@ -365,30 +403,30 @@ const DocumentEditorPage = () => {
             onFormat={handleFormat}
             onShowHistory={handleShowHistory}
             onShare={handleOpenShare}
+            activeFormats={activeFormats}
             canEdit={canEdit}
             canShare={canShare}
           />
         </div>
-        
+
         <div className="editor-container">
-          <textarea
+          <div
             ref={editorRef}
-            className="document-editor"
-            value={content}
-            onChange={handleContentChange}
-            onSelect={handleCursorChange}
+            className={`document-editor ${!canEdit ? 'read-only' : ''}`}
+            contentEditable={canEdit}
+            suppressContentEditableWarning={true}
+            data-placeholder="Start typing..."
+            spellCheck={false}
+            onInput={handleContentChange}
+            onMouseUp={handleCursorChange}
             onKeyUp={handleCursorChange}
-            placeholder="Start typing..."
-            spellCheck="false"
-            readOnly={!canEdit}
           />
           {!canEdit && (
             <div className="view-only-banner">
               You have view access. Ask an owner for edit permission to make changes.
             </div>
           )}
-          
-          {/* Display other users' cursors */}
+
           {Object.entries(cursors).map(([userId, data]) => (
             <div
               key={userId}
@@ -406,31 +444,13 @@ const DocumentEditorPage = () => {
             </div>
           ))}
         </div>
-        
-        {/* Version History Modal */}
-        {showHistory && (
-          <>
-            <div className="modal-overlay" onClick={() => setShowHistory(false)} />
-            <VersionDiffViewer
-              docId={docId}
-              versionId={selectedVersionId || currentVersionId}
-              onClose={() => {
-                setShowHistory(false);
-                setSelectedVersionId(null);
-              }}
-            />
-          </>
-        )}
 
         {showShareModal && (
           <div className="modal-overlay" onClick={() => setShowShareModal(false)}>
             <div className="share-modal" onClick={(e) => e.stopPropagation()}>
               <div className="share-modal-header">
                 <h2>Share and Access</h2>
-                <button
-                  className="modal-close"
-                  onClick={() => setShowShareModal(false)}
-                >
+                <button className="modal-close" onClick={() => setShowShareModal(false)}>
                   x
                 </button>
               </div>

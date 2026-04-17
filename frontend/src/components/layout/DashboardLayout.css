@@ -6,11 +6,18 @@
 
 .dashboard-main {
   flex: 1;
-  background: #f8f9fa;
-  padding: 2rem;
+  background: linear-gradient(180deg, #f4f7fb 0%, #eef5f7 100%);
+  padding: 1.5rem;
 }
 
 .dashboard-container {
   max-width: 1400px;
   margin: 0 auto;
+  width: 100%;
+}
+
+@media (max-width: 640px) {
+  .dashboard-main {
+    padding: 1rem;
+  }
 }

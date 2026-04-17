@@ -9,6 +9,7 @@ import DashboardPage from './pages/DashboardPage'
 import DocumentEditorPage from './pages/DocumentEditorPage'
 import VersionHistoryPage from './pages/VersionHistoryPage'
 import VersionViewPage from './pages/VersionViewPage'
+import AuditLogsPage from './pages/AuditLogsPage'
 
 // Components
 import ProtectedRoute from './components/common/ProtectedRoute'
@@ -66,6 +67,12 @@ function App() {
           <Route path="/history/:docId/view/:versionId" element={
             <ProtectedRoute>
               <VersionViewPage />
+            </ProtectedRoute>
+          } />
+
+          <Route path="/logs" element={
+            <ProtectedRoute>
+              <AuditLogsPage />
             </ProtectedRoute>
           } />
           
