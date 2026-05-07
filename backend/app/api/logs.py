@@ -13,7 +13,7 @@ def get_recent_logs():
     """Return recent audit logs for documents the current user can access."""
     try:
         current_user_id = int(get_jwt_identity())
-        limit = min(request.args.get('limit', 5, type=int), 20)
+        limit = min(request.args.get('limit', 10, type=int), 30)
 
         owned_doc_ids = [
             doc_id for (doc_id,) in Document.query.filter_by(
@@ -34,17 +34,27 @@ def get_recent_logs():
         if not accessible_doc_ids:
             return jsonify([]), 200
 
-        logs = EditLog.query.join(
+        raw_logs = EditLog.query.join(
             Document, EditLog.doc_id == Document.doc_id
         ).filter(
             EditLog.doc_id.in_(accessible_doc_ids),
             Document.is_deleted.is_(False)
-        ).order_by(EditLog.timestamp.desc()).limit(limit).all()
+        ).order_by(EditLog.timestamp.desc()).limit(max(limit * 5, 30)).all()
+
+        meaningful_logs = [
+            log for log in raw_logs
+            if not (
+                log.operation == 'UPDATE' and
+                not (log.metadata_json or {}).get('is_saved_version')
+            )
+        ]
+        logs = (meaningful_logs or raw_logs)[:limit]
 
         return jsonify([
             {
                 **log.to_dict(),
-                'document_title': log.document.title if log.document else None
+                'document_title': log.document.title if log.document else None,
+                'document_owner_name': log.document.owner.name if log.document and log.document.owner else None
             }
             for log in logs
         ]), 200

@@ -148,9 +148,11 @@ def delete_comment(comment_id):
 
     data = request.get_json() or {}
     content = data.get('content', '')
-    anchor_missing = not annotation_service.find_span(content, annotation_service.COMMENT_ATTR, comment.anchor_id)
-    if not anchor_missing:
-        return jsonify({'error': 'Invalid request', 'message': 'Comment highlight must be removed before deleting'}), 400
+    content = annotation_service.unwrap_span(
+        content,
+        annotation_service.COMMENT_ATTR,
+        comment.anchor_id
+    )
 
     try:
         new_version, _ = transaction_manager.save_document_version(
@@ -176,7 +178,8 @@ def delete_comment(comment_id):
         return jsonify({
             'message': 'Comment deleted',
             'version_id': new_version.version_id,
-            'version_number': new_version.version_number
+            'version_number': new_version.version_number,
+            'content': new_version.content
         }), 200
     except PermissionError as e:
         db.session.rollback()

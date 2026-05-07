@@ -62,6 +62,7 @@ export const wrapSelectionWithAnnotation = (editor, type, id) => {
   const wrapper = window.document.createElement('span');
   if (type === 'comment') {
     wrapper.setAttribute('data-comment-id', id);
+    wrapper.setAttribute('data-selected-text', snapshot.text);
     wrapper.className = 'comment-anchor';
   } else if (type === 'lock') {
     wrapper.setAttribute('data-lock-id', id);
@@ -75,9 +76,7 @@ export const wrapSelectionWithAnnotation = (editor, type, id) => {
   const fragment = snapshot.range.extractContents();
   wrapper.appendChild(fragment);
   snapshot.range.insertNode(wrapper);
-
-  const selection = window.getSelection();
-  selection.removeAllRanges();
+  moveCaretAfterElement(wrapper);
 
   return {
     id,
@@ -97,6 +96,86 @@ export const unwrapAnnotation = (editor, selector) => {
   }
   parent.removeChild(target);
   return true;
+};
+
+export const moveCaretAfterElement = (element) => {
+  if (!element) return false;
+
+  const selection = window.getSelection();
+  const range = window.document.createRange();
+  range.setStartAfter(element);
+  range.collapse(true);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+};
+
+export const moveCaretOutOfAnnotation = (editor) => {
+  const selection = window.getSelection();
+  if (!editor || !selection || selection.rangeCount === 0) return false;
+
+  const range = selection.getRangeAt(0);
+  if (!selectionBelongsToEditor(editor, range)) return false;
+
+  const node = range.startContainer;
+  const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+  const annotation = element?.closest?.('[data-comment-id], [data-lock-id]');
+  if (!annotation || !editor.contains(annotation)) return false;
+
+  return moveCaretAfterElement(annotation);
+};
+
+export const repairCommentBoundaries = (editor, comments = []) => {
+  if (!editor) return false;
+
+  let changed = false;
+  const selection = window.getSelection();
+  const selectedTextByAnchor = new Map(
+    comments.map((comment) => [comment.anchor_id, comment.selected_text])
+  );
+
+  editor.querySelectorAll('[data-comment-id]').forEach((element) => {
+    const anchorId = element.getAttribute('data-comment-id');
+    const selectedText = selectedTextByAnchor.get(anchorId) || element.getAttribute('data-selected-text');
+    const currentText = element.textContent || '';
+
+    if (!selectedText || currentText === selectedText || !currentText.startsWith(selectedText)) {
+      return;
+    }
+
+    const extraText = currentText.slice(selectedText.length);
+    const selectionWasInsideComment = Boolean(
+      selection &&
+      selection.rangeCount > 0 &&
+      element.contains(selection.getRangeAt(0).startContainer)
+    );
+    element.textContent = selectedText;
+    element.setAttribute('data-selected-text', selectedText);
+
+    if (extraText) {
+      const extraNode = window.document.createTextNode(extraText);
+      element.parentNode.insertBefore(extraNode, element.nextSibling);
+
+      if (selectionWasInsideComment) {
+        const range = window.document.createRange();
+        range.setStart(extraNode, extraNode.length);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+    changed = true;
+  });
+
+  return changed;
+};
+
+export const getMissingCommentAnchors = (editor, comments = []) => {
+  if (!editor) return [];
+
+  return comments.filter((comment) => (
+    !editor.querySelector(`[data-comment-id="${comment.anchor_id}"]`)
+  ));
 };
 
 export const decorateEditorAnnotations = (editor) => {

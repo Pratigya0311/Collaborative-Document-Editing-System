@@ -9,6 +9,9 @@ import { formatRelativeTime } from '../lib/utils';
 import {
   decorateEditorAnnotations,
   focusAnnotation,
+  getMissingCommentAnchors,
+  moveCaretOutOfAnnotation,
+  repairCommentBoundaries,
   unwrapAnnotation,
   wrapSelectionWithAnnotation
 } from '../lib/annotationUtils';
@@ -35,6 +38,7 @@ const DocumentEditorPage = () => {
   const [collaborators, setCollaborators] = useState([]);
   const [comments, setComments] = useState([]);
   const [locks, setLocks] = useState([]);
+  const deletingMissingCommentsRef = useRef(new Set());
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
     italic: false,
@@ -203,7 +207,38 @@ const DocumentEditorPage = () => {
   const handleContentChange = (e) => {
     if (!canEdit) return;
 
+    repairCommentBoundaries(editorRef.current, comments);
     const newContent = e.currentTarget.innerHTML;
+    const missingComments = getMissingCommentAnchors(editorRef.current, comments);
+
+    if (missingComments.length > 0) {
+      setComments((current) => current.filter((comment) => (
+        !missingComments.some((missing) => missing.comment_id === comment.comment_id)
+      )));
+
+      missingComments.forEach((comment) => {
+        if (deletingMissingCommentsRef.current.has(comment.comment_id)) return;
+
+        deletingMissingCommentsRef.current.add(comment.comment_id);
+        commentsApi.delete(comment.comment_id, {
+          content: newContent,
+          base_version_id: currentVersionId
+        }).then((response) => {
+          setCurrentVersionId(response.data.version_id);
+          setDocumentData((current) => ({
+            ...current,
+            content: response.data.content || newContent,
+            last_version_id: response.data.version_id
+          }));
+        }).catch((error) => {
+          console.error('Failed to delete removed comment:', error);
+          refreshAnnotations();
+        }).finally(() => {
+          deletingMissingCommentsRef.current.delete(comment.comment_id);
+        });
+      });
+    }
+
     setContent(newContent);
     sendTypingStatus(true);
     sendContentChange(newContent);
@@ -263,6 +298,7 @@ const DocumentEditorPage = () => {
   };
 
   const handleCursorChange = () => {
+    moveCaretOutOfAnnotation(editorRef.current);
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
 
@@ -330,6 +366,7 @@ const DocumentEditorPage = () => {
 
       setComments((current) => [...current, response.data.comment]);
       setCurrentVersionId(response.data.version_id);
+      editorRef.current?.focus();
       setDocumentData((current) => ({
         ...current,
         content: updatedContent,
@@ -365,11 +402,14 @@ const DocumentEditorPage = () => {
       });
       setComments((current) => current.filter((item) => item.comment_id !== comment.comment_id));
       setCurrentVersionId(response.data.version_id);
+      const nextContent = response.data.content || updatedContent;
+      syncEditorHtml(nextContent);
       setDocumentData((current) => ({
         ...current,
-        content: updatedContent,
+        content: nextContent,
         last_version_id: response.data.version_id
       }));
+      setContent(nextContent);
       toast.success('Comment deleted');
     } catch (error) {
       console.error('Failed to delete comment:', error);
@@ -582,6 +622,7 @@ const DocumentEditorPage = () => {
               suppressContentEditableWarning={true}
               data-placeholder="Start typing..."
               spellCheck={false}
+              onBeforeInput={() => moveCaretOutOfAnnotation(editorRef.current)}
               onInput={handleContentChange}
               onMouseUp={handleCursorChange}
               onKeyUp={handleCursorChange}

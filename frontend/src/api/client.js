@@ -61,13 +61,6 @@ client.interceptors.response.use(
       }
     }
     
-    // Handle other errors
-    const message = error.response?.data?.message || error.message || 'An error occurred';
-    
-    if (error.response?.status !== 401) {
-      toast.error(message);
-    }
-    
     return Promise.reject(error);
   }
 );

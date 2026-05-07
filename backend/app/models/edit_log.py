@@ -26,6 +26,7 @@ class EditLog(db.Model):
             'doc_id': self.doc_id,
             'user_id': self.user_id,
             'user_name': self.user.name if self.user else None,
+            'user_email': self.user.email if self.user else None,
             'operation': self.operation,
             'timestamp': self.timestamp.isoformat() if self.timestamp else None,
             'version_id': self.version_id,

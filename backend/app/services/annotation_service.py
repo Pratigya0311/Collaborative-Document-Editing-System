@@ -43,6 +43,17 @@ class AnnotationService:
             return ''
         return re.sub(r'\s+', ' ', html).strip()
 
+    def unwrap_span(self, html: str, attr_name: str, attr_value: str) -> str:
+        """Remove an annotation span while keeping the selected text inside it."""
+        if not html:
+            return ''
+
+        pattern = re.compile(
+            rf'<span\b(?=[^>]*\b{re.escape(attr_name)}=["\']{re.escape(str(attr_value))}["\'])[^>]*>(.*?)</span>',
+            re.IGNORECASE | re.DOTALL
+        )
+        return pattern.sub(lambda match: match.group(1), html, count=1)
+
     def validate_locks(self, html: str, locks) -> tuple[bool, str | None]:
         """Ensure every stored lock still exists unchanged in new content."""
         for lock in locks:
