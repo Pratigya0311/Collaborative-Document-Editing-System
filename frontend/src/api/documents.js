@@ -73,3 +73,15 @@ export const authApi = {
 export const logsApi = {
   getRecent: (limit = 5) => client.get('/logs/', { params: { limit } }),
 };
+
+export const commentsApi = {
+  getByDocument: (docId) => client.get(`/comments/document/${docId}`),
+  create: (docId, data) => client.post(`/comments/document/${docId}`, data),
+  delete: (commentId, data) => client.delete(`/comments/${commentId}`, { data }),
+};
+
+export const locksApi = {
+  getByDocument: (docId) => client.get(`/locks/document/${docId}`),
+  create: (docId, data) => client.post(`/locks/document/${docId}`, data),
+  delete: (lockId, data) => client.delete(`/locks/${lockId}`, { data }),
+};

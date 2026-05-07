@@ -26,6 +26,14 @@ class User(db.Model):
         lazy='dynamic',
         cascade='all, delete-orphan',
     )
+    comments = db.relationship('DocumentComment', backref='user', lazy='dynamic', cascade='all, delete-orphan')
+    created_locks = db.relationship(
+        'DocumentLock',
+        foreign_keys='DocumentLock.created_by',
+        backref='creator',
+        lazy='dynamic',
+        cascade='all, delete-orphan',
+    )
     
     def set_password(self, password):
         """Hash and set user password"""

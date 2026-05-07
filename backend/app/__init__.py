@@ -66,12 +66,16 @@ def register_blueprints(app):
     from .api.logs import logs_bp
     from .api.versions import versions_bp
     from .api.websockets import ws_bp
+    from .api.comments import comments_bp
+    from .api.locks import locks_bp
     
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(documents_bp, url_prefix='/api/documents')
     app.register_blueprint(logs_bp, url_prefix='/api/logs')
     app.register_blueprint(versions_bp, url_prefix='/api/versions')
     app.register_blueprint(ws_bp, url_prefix='/api/ws')
+    app.register_blueprint(comments_bp, url_prefix='/api/comments')
+    app.register_blueprint(locks_bp, url_prefix='/api/locks')
 
 def register_error_handlers(app):
     """Register custom error handlers"""

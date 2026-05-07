@@ -2,10 +2,16 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import DashboardLayout from '../components/layout/DashboardLayout';
 import Toolbar from '../components/editor/Toolbar';
-import { documentsApi, versionsApi } from '../api/documents';
+import { commentsApi, documentsApi, locksApi, versionsApi } from '../api/documents';
 import { useDocumentSocket } from '../hooks/useDocumentSocket';
 import { useDebouncedCallback } from '../hooks/useDebounce';
 import { formatRelativeTime } from '../lib/utils';
+import {
+  decorateEditorAnnotations,
+  focusAnnotation,
+  unwrapAnnotation,
+  wrapSelectionWithAnnotation
+} from '../lib/annotationUtils';
 import Spinner from '../components/common/Spinner';
 import toast from 'react-hot-toast';
 import './DocumentEditorPage.css';
@@ -27,14 +33,18 @@ const DocumentEditorPage = () => {
   const [sharePermission, setSharePermission] = useState('edit');
   const [sharing, setSharing] = useState(false);
   const [collaborators, setCollaborators] = useState([]);
+  const [comments, setComments] = useState([]);
+  const [locks, setLocks] = useState([]);
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
     italic: false,
     underline: false,
     bullet: false
   });
+
   const canEdit = documentData?.can_edit !== false;
   const canShare = documentData?.can_share === true;
+  const canLock = documentData?.is_real_owner === true;
 
   const {
     connected,
@@ -53,6 +63,22 @@ const DocumentEditorPage = () => {
     if (editorRef.current.innerHTML !== (html || '')) {
       editorRef.current.innerHTML = html || '';
     }
+    decorateEditorAnnotations(editorRef.current);
+  };
+
+  const getEditorHtml = () => editorRef.current?.innerHTML || '';
+
+  const refreshAnnotations = async () => {
+    try {
+      const [commentsResponse, locksResponse] = await Promise.all([
+        commentsApi.getByDocument(docId),
+        locksApi.getByDocument(docId)
+      ]);
+      setComments(commentsResponse.data);
+      setLocks(locksResponse.data);
+    } catch (error) {
+      console.error('Failed to refresh annotations:', error);
+    }
   };
 
   const updateActiveFormats = () => {
@@ -60,23 +86,13 @@ const DocumentEditorPage = () => {
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) {
-      setActiveFormats({
-        bold: false,
-        italic: false,
-        underline: false,
-        bullet: false
-      });
+      setActiveFormats({ bold: false, italic: false, underline: false, bullet: false });
       return;
     }
 
     const anchorNode = selection.anchorNode;
     if (!anchorNode || !editorRef.current.contains(anchorNode)) {
-      setActiveFormats({
-        bold: false,
-        italic: false,
-        underline: false,
-        bullet: false
-      });
+      setActiveFormats({ bold: false, italic: false, underline: false, bullet: false });
       return;
     }
 
@@ -88,19 +104,29 @@ const DocumentEditorPage = () => {
     });
   };
 
+  const loadDocument = async () => {
+    try {
+      const response = await documentsApi.getById(docId);
+      setDocumentData(response.data);
+      setContent(response.data.content || '');
+      setCurrentVersionId(response.data.last_version_id);
+      syncEditorHtml(response.data.content || '');
+    } catch (error) {
+      console.error('Failed to load document:', error);
+      toast.error('Failed to load document');
+      navigate('/dashboard');
+    }
+  };
+
   useEffect(() => {
-    loadDocument();
+    setLoading(true);
+    Promise.all([loadDocument(), refreshAnnotations()]).finally(() => setLoading(false));
   }, [docId]);
 
   useEffect(() => {
-    const handleSelectionChange = () => {
-      updateActiveFormats();
-    };
-
+    const handleSelectionChange = () => updateActiveFormats();
     document.addEventListener('selectionchange', handleSelectionChange);
-    return () => {
-      document.removeEventListener('selectionchange', handleSelectionChange);
-    };
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
   }, []);
 
   useEffect(() => {
@@ -121,7 +147,8 @@ const DocumentEditorPage = () => {
       last_version_id: latestRemoteSave.last_version_id || latestRemoteSave.version_id,
       updated_at: latestRemoteSave.updated_at || current?.updated_at
     }));
-    toast(`${latestRemoteSave.user_name || 'Another user'} saved changes`, { duration: 2500 });
+    refreshAnnotations();
+    toast(`${latestRemoteSave.user_name || 'Another user'} updated the document`, { duration: 2500 });
   }, [latestRemoteSave, docId]);
 
   useEffect(() => {
@@ -137,22 +164,6 @@ const DocumentEditorPage = () => {
     }));
   }, [latestRemoteDraft, docId]);
 
-  const loadDocument = async () => {
-    try {
-      const response = await documentsApi.getById(docId);
-      setDocumentData(response.data);
-      setContent(response.data.content || '');
-      setCurrentVersionId(response.data.last_version_id);
-      syncEditorHtml(response.data.content || '');
-    } catch (error) {
-      console.error('Failed to load document:', error);
-      toast.error('Failed to load document');
-      navigate('/dashboard');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const debouncedSave = useDebouncedCallback(async (newContent) => {
     await saveDocument(newContent);
   }, 2000);
@@ -163,29 +174,27 @@ const DocumentEditorPage = () => {
 
     setSaving(true);
     try {
-      const response = await documentsApi.update(
-        docId,
-        contentToSave,
-        currentVersionId,
-        'Auto-save'
-      );
-
-      if (response.status === 409) {
-        toast.warning('Conflict detected. Merging changes...', { duration: 5000 });
-        await loadDocument();
-      } else {
-        setCurrentVersionId(response.data.version_id);
-        setDocumentData((current) => ({
-          ...current,
-          content: contentToSave,
-          last_version_id: response.data.version_id
-        }));
-        setLastSaved(new Date());
-        toast.success('Document saved', { duration: 1500 });
-      }
+      const response = await documentsApi.update(docId, contentToSave, currentVersionId, 'Auto-save');
+      setCurrentVersionId(response.data.version_id);
+      setDocumentData((current) => ({
+        ...current,
+        content: contentToSave,
+        last_version_id: response.data.version_id
+      }));
+      setLastSaved(new Date());
     } catch (error) {
       console.error('Failed to save document:', error);
-      toast.error('Failed to save document');
+      const status = error.response?.status;
+      if (status === 409) {
+        toast.error('Conflict detected. Reloading the latest version.');
+        await loadDocument();
+      } else if (status === 423) {
+        toast.error(error.response?.data?.message || 'That text is locked by the owner.');
+        await loadDocument();
+      } else {
+        toast.error('Failed to save document');
+      }
+      await refreshAnnotations();
     } finally {
       setSaving(false);
     }
@@ -198,13 +207,11 @@ const DocumentEditorPage = () => {
     setContent(newContent);
     sendTypingStatus(true);
     sendContentChange(newContent);
-    setTimeout(() => sendTypingStatus(false), 1000);
+    window.setTimeout(() => sendTypingStatus(false), 1000);
     debouncedSave(newContent);
   };
 
-  const handleManualSave = () => {
-    saveDocument(content);
-  };
+  const handleManualSave = () => saveDocument(getEditorHtml());
 
   const handleDownload = async () => {
     try {
@@ -234,7 +241,7 @@ const DocumentEditorPage = () => {
     try {
       const response = await versionsApi.saveVersion(
         docId,
-        content,
+        getEditorHtml(),
         currentVersionId,
         summary.trim() || 'Saved version'
       );
@@ -242,7 +249,7 @@ const DocumentEditorPage = () => {
       setCurrentVersionId(response.data.version_id);
       setDocumentData((current) => ({
         ...current,
-        content,
+        content: getEditorHtml(),
         last_version_id: response.data.version_id
       }));
       setLastSaved(new Date());
@@ -289,20 +296,160 @@ const DocumentEditorPage = () => {
         return;
     }
 
-    const newContent = editorRef.current.innerHTML;
+    const newContent = getEditorHtml();
     setContent(newContent);
+    decorateEditorAnnotations(editorRef.current);
     sendContentChange(newContent);
     debouncedSave(newContent);
     updateActiveFormats();
   };
 
-  const handleShowHistory = () => {
-    navigate(`/history/${docId}`);
+  const handleAddComment = async () => {
+    if (!canEdit || !editorRef.current) return;
+
+    const body = window.prompt('Comment for selected text');
+    if (!body || !body.trim()) return;
+
+    const anchorId = crypto.randomUUID();
+    const wrapped = wrapSelectionWithAnnotation(editorRef.current, 'comment', anchorId);
+    if (wrapped.error) {
+      toast.error(wrapped.error);
+      return;
+    }
+
+    const updatedContent = getEditorHtml();
+    setContent(updatedContent);
+
+    try {
+      const response = await commentsApi.create(docId, {
+        content: updatedContent,
+        anchor_id: anchorId,
+        body: body.trim(),
+        base_version_id: currentVersionId
+      });
+
+      setComments((current) => [...current, response.data.comment]);
+      setCurrentVersionId(response.data.version_id);
+      setDocumentData((current) => ({
+        ...current,
+        content: updatedContent,
+        last_version_id: response.data.version_id
+      }));
+      setLastSaved(new Date());
+      toast.success('Comment added to selected text');
+    } catch (error) {
+      console.error('Failed to create comment:', error);
+      toast.error(error.response?.data?.message || 'Failed to create comment');
+      await loadDocument();
+      await refreshAnnotations();
+    }
+  };
+
+  const handleDeleteComment = async (comment) => {
+    if (!editorRef.current) return;
+    if (!window.confirm('Delete this comment?')) return;
+
+    const removed = unwrapAnnotation(editorRef.current, `[data-comment-id="${comment.anchor_id}"]`);
+    if (!removed) {
+      toast.error('Comment highlight was not found in the document.');
+      return;
+    }
+
+    const updatedContent = getEditorHtml();
+    setContent(updatedContent);
+
+    try {
+      const response = await commentsApi.delete(comment.comment_id, {
+        content: updatedContent,
+        base_version_id: currentVersionId
+      });
+      setComments((current) => current.filter((item) => item.comment_id !== comment.comment_id));
+      setCurrentVersionId(response.data.version_id);
+      setDocumentData((current) => ({
+        ...current,
+        content: updatedContent,
+        last_version_id: response.data.version_id
+      }));
+      toast.success('Comment deleted');
+    } catch (error) {
+      console.error('Failed to delete comment:', error);
+      toast.error(error.response?.data?.message || 'Failed to delete comment');
+      await loadDocument();
+      await refreshAnnotations();
+    }
+  };
+
+  const handleLockSelection = async () => {
+    if (!canEdit || !canLock || !editorRef.current) return;
+
+    const lockId = crypto.randomUUID();
+    const wrapped = wrapSelectionWithAnnotation(editorRef.current, 'lock', lockId);
+    if (wrapped.error) {
+      toast.error(wrapped.error);
+      return;
+    }
+
+    const updatedContent = getEditorHtml();
+    setContent(updatedContent);
+
+    try {
+      const response = await locksApi.create(docId, {
+        content: updatedContent,
+        lock_id: lockId,
+        base_version_id: currentVersionId
+      });
+      setLocks((current) => [...current, response.data.lock]);
+      setCurrentVersionId(response.data.version_id);
+      setDocumentData((current) => ({
+        ...current,
+        content: updatedContent,
+        last_version_id: response.data.version_id
+      }));
+      toast.success('Selected text locked for everyone');
+    } catch (error) {
+      console.error('Failed to lock text:', error);
+      toast.error(error.response?.data?.message || 'Failed to lock text');
+      await loadDocument();
+      await refreshAnnotations();
+    }
+  };
+
+  const handleUnlockText = async (lock) => {
+    if (!editorRef.current || !canLock) return;
+    if (!window.confirm('Unlock this selected text?')) return;
+
+    const removed = unwrapAnnotation(editorRef.current, `[data-lock-id="${lock.lock_id}"]`);
+    if (!removed) {
+      toast.error('Locked text was not found in the document.');
+      return;
+    }
+
+    const updatedContent = getEditorHtml();
+    setContent(updatedContent);
+
+    try {
+      const response = await locksApi.delete(lock.lock_id, {
+        content: updatedContent,
+        base_version_id: currentVersionId
+      });
+      setLocks((current) => current.filter((item) => item.lock_id !== lock.lock_id));
+      setCurrentVersionId(response.data.version_id);
+      setDocumentData((current) => ({
+        ...current,
+        content: updatedContent,
+        last_version_id: response.data.version_id
+      }));
+      toast.success('Locked text is editable again');
+    } catch (error) {
+      console.error('Failed to unlock text:', error);
+      toast.error(error.response?.data?.message || 'Failed to unlock text');
+      await loadDocument();
+      await refreshAnnotations();
+    }
   };
 
   const handleOpenShare = async () => {
     setShowShareModal(true);
-
     try {
       const response = await documentsApi.getCollaborators(docId);
       setCollaborators(response.data);
@@ -371,6 +518,20 @@ const DocumentEditorPage = () => {
     }
   };
 
+  const focusComment = (comment) => {
+    const found = focusAnnotation(editorRef.current, `[data-comment-id="${comment.anchor_id}"]`);
+    if (!found) {
+      toast.error('That commented text is no longer visible in the editor.');
+    }
+  };
+
+  const focusLock = (lock) => {
+    const found = focusAnnotation(editorRef.current, `[data-lock-id="${lock.lock_id}"]`);
+    if (!found) {
+      toast.error('That locked text is no longer visible in the editor.');
+    }
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
@@ -397,52 +558,131 @@ const DocumentEditorPage = () => {
             onSave={handleManualSave}
             onSaveVersion={handleSaveVersion}
             onDownload={handleDownload}
+            onAddComment={handleAddComment}
+            onLockSelection={handleLockSelection}
             saving={saving}
             savingVersion={savingVersion}
             lastSaved={lastSaved ? formatRelativeTime(lastSaved) : null}
             onFormat={handleFormat}
-            onShowHistory={handleShowHistory}
+            onShowHistory={() => navigate(`/history/${docId}`)}
             onShare={handleOpenShare}
             activeFormats={activeFormats}
             canEdit={canEdit}
             canShare={canShare}
+            canLock={canLock}
           />
         </div>
 
-        <div className="editor-container">
-          <div
-            ref={editorRef}
-            className={`document-editor ${!canEdit ? 'read-only' : ''}`}
-            contentEditable={canEdit}
-            suppressContentEditableWarning={true}
-            data-placeholder="Start typing..."
-            spellCheck={false}
-            onInput={handleContentChange}
-            onMouseUp={handleCursorChange}
-            onKeyUp={handleCursorChange}
-          />
-          {!canEdit && (
-            <div className="view-only-banner">
-              You have view access. Ask an owner for edit permission to make changes.
-            </div>
-          )}
-
-          {Object.entries(cursors).map(([userId, data]) => (
+        <div className="editor-workspace">
+          <div className="editor-container">
             <div
-              key={userId}
-              className="remote-cursor"
-              style={{
-                position: 'absolute',
-                top: data.position ? `${data.position.selectionStart}px` : 0,
-                left: 0
-              }}
-            >
-              <div className="cursor-label">
-                {data.user_name || `User ${userId}`}
-                {typingUsers.has(String(userId)) && ' is typing...'}
+              ref={editorRef}
+              className={`document-editor ${!canEdit ? 'read-only' : ''}`}
+              contentEditable={canEdit}
+              suppressContentEditableWarning={true}
+              data-placeholder="Start typing..."
+              spellCheck={false}
+              onInput={handleContentChange}
+              onMouseUp={handleCursorChange}
+              onKeyUp={handleCursorChange}
+            />
+
+            {!canEdit && (
+              <div className="view-only-banner">
+                You have view access. Ask an owner for edit permission to make changes.
               </div>
-            </div>
-          ))}
+            )}
+
+            {Object.entries(cursors).map(([userId, data]) => (
+              <div
+                key={userId}
+                className="remote-cursor"
+                style={{
+                  position: 'absolute',
+                  top: data.position ? `${data.position.selectionStart}px` : 0,
+                  left: 0
+                }}
+              >
+                <div className="cursor-label">
+                  {data.user_name || `User ${userId}`}
+                  {typingUsers.has(String(userId)) && ' is typing...'}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <aside className="annotation-sidebar">
+            <section className="annotation-panel">
+              <div className="annotation-panel-header">
+                <h2>Selected Text Comments</h2>
+                <span>{comments.length}</span>
+              </div>
+              {comments.length === 0 ? (
+                <p className="annotation-empty">Select text and use Comment to attach feedback.</p>
+              ) : (
+                comments.map((comment) => (
+                  <article key={comment.comment_id} className="annotation-card">
+                    <button
+                      type="button"
+                      className="annotation-quote"
+                      onClick={() => focusComment(comment)}
+                    >
+                      "{comment.selected_text}"
+                    </button>
+                    <p>{comment.body}</p>
+                    <div className="annotation-meta">
+                      <span>{comment.user_name || 'Unknown user'}</span>
+                      <button
+                        type="button"
+                        className="annotation-delete"
+                        onClick={() => handleDeleteComment(comment)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </article>
+                ))
+              )}
+            </section>
+
+            <section className="annotation-panel">
+              <div className="annotation-panel-header">
+                <h2>Locked Text</h2>
+                <span>{locks.length}</span>
+              </div>
+              {locks.length === 0 ? (
+                <p className="annotation-empty">
+                  {canLock
+                    ? 'Select text and use Lock Text to make it immutable for everyone.'
+                    : 'The owner has not locked any text yet.'}
+                </p>
+              ) : (
+                locks.map((lock) => (
+                  <article key={lock.lock_id} className="annotation-card lock-card">
+                    <button
+                      type="button"
+                      className="annotation-quote"
+                      onClick={() => focusLock(lock)}
+                    >
+                      "{lock.selected_text}"
+                    </button>
+                    <div className="annotation-meta">
+                      <span>{lock.created_by_name || 'Owner lock'}</span>
+                      {canLock && (
+                        <button
+                          type="button"
+                          className="annotation-delete"
+                          onClick={() => handleUnlockText(lock)}
+                        >
+                          Unlock
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                ))
+              )}
+            </section>
+          </aside>
         </div>
 
         {showShareModal && (

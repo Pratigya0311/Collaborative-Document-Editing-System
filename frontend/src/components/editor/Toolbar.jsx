@@ -1,8 +1,8 @@
 import React from 'react';
 import { 
   FiBold, FiItalic, FiUnderline, 
-  FiList, FiSave, FiClock, FiShare2, FiGitCommit
-  , FiDownload
+  FiList, FiSave, FiClock, FiShare2, FiGitCommit,
+  FiDownload, FiMessageSquare, FiLock
 } from 'react-icons/fi';
 import './Toolbar.css';
 
@@ -10,6 +10,8 @@ const Toolbar = ({
   onSave, 
   onSaveVersion,
   onDownload,
+  onAddComment,
+  onLockSelection,
   saving, 
   savingVersion = false,
   lastSaved, 
@@ -18,7 +20,8 @@ const Toolbar = ({
   onShare,
   activeFormats = {},
   canEdit = true,
-  canShare = false
+  canShare = false,
+  canLock = false
 }) => {
   return (
     <div className="editor-toolbar">
@@ -59,6 +62,26 @@ const Toolbar = ({
         >
           <FiList />
         </button>
+        <button
+          className="toolbar-btn comment-btn"
+          onClick={onAddComment}
+          disabled={!canEdit}
+          title="Comment on selected text"
+        >
+          <FiMessageSquare />
+          <span>Comment</span>
+        </button>
+        {canLock && (
+          <button
+            className="toolbar-btn lock-btn"
+            onClick={onLockSelection}
+            disabled={!canEdit}
+            title="Lock selected text"
+          >
+            <FiLock />
+            <span>Lock Text</span>
+          </button>
+        )}
       </div>
       
       <div className="toolbar-group">

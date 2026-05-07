@@ -5,8 +5,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 
 from ..extensions import db
-from ..models import Document, DocumentVersion, EditLog, User
+from ..models import Document, DocumentVersion, EditLog, User, DocumentLock
 from .diff_engine import DiffEngine
+from .annotation_service import AnnotationService
 
 class TransactionManager:
     """
@@ -16,6 +17,7 @@ class TransactionManager:
     
     def __init__(self):
         self.diff_engine = DiffEngine()
+        self.annotation_service = AnnotationService()
     
     def save_document_version(
         self, 
@@ -25,7 +27,8 @@ class TransactionManager:
         base_version_id: Optional[int] = None,
         change_summary: str = "",
         title: Optional[str] = None,
-        is_saved_version: bool = False
+        is_saved_version: bool = False,
+        skip_lock_ids: Optional[list[str]] = None
     ) -> Tuple[DocumentVersion, Dict[str, Any]]:
         """
         Save a new document version with ACID guarantees.
@@ -54,6 +57,15 @@ class TransactionManager:
 
             current_content = document.content
             current_version_id = document.last_version_id
+
+            skip_lock_ids = skip_lock_ids or []
+            locks = DocumentLock.query.filter(
+                DocumentLock.doc_id == doc_id,
+                DocumentLock.lock_id.notin_(skip_lock_ids) if skip_lock_ids else True
+            ).all()
+            valid_locks, lock_error = self.annotation_service.validate_locks(new_content, locks)
+            if not valid_locks:
+                raise PermissionError(lock_error)
 
             if base_version_id and base_version_id != current_version_id:
                 conflict_info['detected'] = True

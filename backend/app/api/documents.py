@@ -221,6 +221,8 @@ def update_document(doc_id):
         
     except ValueError as e:
         return jsonify({'error': 'Document not found', 'message': str(e)}), 404
+    except PermissionError as e:
+        return jsonify({'error': 'Locked text', 'message': str(e)}), 423
     except Exception as e:
         return jsonify({'error': 'Failed to update document', 'message': str(e)}), 400
 
