@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS document_comments (
     comment_id SERIAL PRIMARY KEY,
     doc_id INTEGER NOT NULL REFERENCES documents(doc_id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(user_id),
-    anchor_id VARCHAR(64) NOT NULL UNIQUE,
+    anchor_id VARCHAR(64) NOT NULL,
     selected_text TEXT NOT NULL,
     body TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -93,6 +93,7 @@ CREATE INDEX IF NOT EXISTS ix_document_collaborators_doc_id ON document_collabor
 CREATE INDEX IF NOT EXISTS ix_document_collaborators_user_id ON document_collaborators(user_id);
 CREATE INDEX IF NOT EXISTS ix_document_comments_doc_id ON document_comments(doc_id);
 CREATE INDEX IF NOT EXISTS ix_document_comments_user_id ON document_comments(user_id);
+CREATE INDEX IF NOT EXISTS ix_document_comments_anchor_id ON document_comments(anchor_id);
 CREATE INDEX IF NOT EXISTS idx_comment_doc_created ON document_comments(doc_id, created_at);
 CREATE INDEX IF NOT EXISTS ix_document_locks_doc_id ON document_locks(doc_id);
 CREATE INDEX IF NOT EXISTS ix_document_locks_created_by ON document_locks(created_by);

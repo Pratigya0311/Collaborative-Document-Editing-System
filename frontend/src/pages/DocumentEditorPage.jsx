@@ -6,11 +6,13 @@ import { commentsApi, documentsApi, locksApi, versionsApi } from '../api/documen
 import { useDocumentSocket } from '../hooks/useDocumentSocket';
 import { useDebouncedCallback } from '../hooks/useDebounce';
 import { formatRelativeTime } from '../lib/utils';
+import { FiMessageSquare, FiPlus, FiTrash2, FiUnlock, FiX } from 'react-icons/fi';
 import {
   decorateEditorAnnotations,
-  focusAnnotation,
   getMissingCommentAnchors,
-  moveCaretOutOfAnnotation,
+  getSelectedCommentAnchor,
+  moveCaretAfterElement,
+  moveCaretOutOfProtectedPosition,
   repairCommentBoundaries,
   unwrapAnnotation,
   wrapSelectionWithAnnotation
@@ -38,6 +40,9 @@ const DocumentEditorPage = () => {
   const [collaborators, setCollaborators] = useState([]);
   const [comments, setComments] = useState([]);
   const [locks, setLocks] = useState([]);
+  const [annotationPopover, setAnnotationPopover] = useState(null);
+  const [commentDialog, setCommentDialog] = useState(null);
+  const [deleteCommentDialog, setDeleteCommentDialog] = useState(null);
   const deletingMissingCommentsRef = useRef(new Set());
   const [activeFormats, setActiveFormats] = useState({
     bold: false,
@@ -67,7 +72,7 @@ const DocumentEditorPage = () => {
     if (editorRef.current.innerHTML !== (html || '')) {
       editorRef.current.innerHTML = html || '';
     }
-    decorateEditorAnnotations(editorRef.current);
+    decorateEditorAnnotations(editorRef.current, comments, locks, canLock);
   };
 
   const getEditorHtml = () => editorRef.current?.innerHTML || '';
@@ -136,6 +141,10 @@ const DocumentEditorPage = () => {
   useEffect(() => {
     syncEditorHtml(content);
   }, [loading]);
+
+  useEffect(() => {
+    decorateEditorAnnotations(editorRef.current, comments, locks, canLock);
+  }, [comments, locks, canLock]);
 
   useEffect(() => {
     if (!latestRemoteSave) return;
@@ -298,7 +307,6 @@ const DocumentEditorPage = () => {
   };
 
   const handleCursorChange = () => {
-    moveCaretOutOfAnnotation(editorRef.current);
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
 
@@ -334,7 +342,7 @@ const DocumentEditorPage = () => {
 
     const newContent = getEditorHtml();
     setContent(newContent);
-    decorateEditorAnnotations(editorRef.current);
+    decorateEditorAnnotations(editorRef.current, comments, locks, canLock);
     sendContentChange(newContent);
     debouncedSave(newContent);
     updateActiveFormats();
@@ -343,8 +351,11 @@ const DocumentEditorPage = () => {
   const handleAddComment = async () => {
     if (!canEdit || !editorRef.current) return;
 
-    const body = window.prompt('Comment for selected text');
-    if (!body || !body.trim()) return;
+    const existingAnchorId = getSelectedCommentAnchor(editorRef.current);
+    if (existingAnchorId) {
+      openAddCommentDialog(existingAnchorId);
+      return;
+    }
 
     const anchorId = crypto.randomUUID();
     const wrapped = wrapSelectionWithAnnotation(editorRef.current, 'comment', anchorId);
@@ -355,16 +366,80 @@ const DocumentEditorPage = () => {
 
     const updatedContent = getEditorHtml();
     setContent(updatedContent);
+    setAnnotationPopover(null);
+    setCommentDialog({
+      mode: 'new',
+      anchorId,
+      text: '',
+      selectedText: wrapped.text,
+      submitting: false
+    });
+  };
+
+  const closeCommentDialog = () => {
+    if (commentDialog?.submitting) return;
+
+    if (commentDialog?.mode === 'new' && editorRef.current) {
+      unwrapAnnotation(editorRef.current, `[data-comment-id="${commentDialog.anchorId}"]`);
+      setContent(getEditorHtml());
+    }
+
+    setCommentDialog(null);
+    editorRef.current?.focus();
+  };
+
+  const openAddCommentDialog = (anchorId) => {
+    const anchorElement = editorRef.current?.querySelector(`[data-comment-id="${anchorId}"]`);
+    if (!anchorElement) {
+      toast.error('Commented text was not found in the document.');
+      return;
+    }
+
+    setAnnotationPopover(null);
+    setCommentDialog({
+      mode: 'reply',
+      anchorId,
+      text: '',
+      selectedText: anchorElement.textContent || 'Selected text',
+      submitting: false
+    });
+  };
+
+  const submitCommentDialog = async (event) => {
+    event.preventDefault();
+    if (!commentDialog || !canEdit || !editorRef.current) return;
+
+    const body = commentDialog.text.trim();
+    if (!body) {
+      toast.error('Write a comment first.');
+      return;
+    }
+
+    const anchorElement = editorRef.current.querySelector(`[data-comment-id="${commentDialog.anchorId}"]`);
+    if (!anchorElement) {
+      toast.error('Commented text was not found in the document.');
+      setCommentDialog(null);
+      return;
+    }
+
+    const updatedContent = getEditorHtml();
+    setCommentDialog((current) => current ? { ...current, submitting: true } : current);
 
     try {
       const response = await commentsApi.create(docId, {
         content: updatedContent,
-        anchor_id: anchorId,
+        anchor_id: commentDialog.anchorId,
         body: body.trim(),
         base_version_id: currentVersionId
       });
 
       setComments((current) => [...current, response.data.comment]);
+      setAnnotationPopover((current) => current?.anchorId === commentDialog.anchorId
+        ? {
+            ...current,
+            comments: [...(current.comments || []), response.data.comment]
+          }
+        : current);
       setCurrentVersionId(response.data.version_id);
       editorRef.current?.focus();
       setDocumentData((current) => ({
@@ -373,23 +448,51 @@ const DocumentEditorPage = () => {
         last_version_id: response.data.version_id
       }));
       setLastSaved(new Date());
-      toast.success('Comment added to selected text');
+      setCommentDialog(null);
+      editorRef.current?.focus();
+      const anchorElement = editorRef.current?.querySelector(
+        `[data-comment-id="${commentDialog.anchorId}"]`
+      );
+      moveCaretAfterElement(anchorElement);
+      toast.success(commentDialog.mode === 'new'
+        ? 'Comment added to selected text'
+        : 'Comment added');
     } catch (error) {
       console.error('Failed to create comment:', error);
       toast.error(error.response?.data?.message || 'Failed to create comment');
-      await loadDocument();
+      if (commentDialog.mode === 'new') {
+        await loadDocument();
+      }
       await refreshAnnotations();
+      setCommentDialog((current) => current ? { ...current, submitting: false } : current);
     }
+  };
+
+  const handleAddCommentToAnchor = async (anchorId) => {
+    openAddCommentDialog(anchorId);
   };
 
   const handleDeleteComment = async (comment) => {
     if (!editorRef.current) return;
-    if (!window.confirm('Delete this comment?')) return;
+    setAnnotationPopover(null);
+    setDeleteCommentDialog(comment);
+  };
 
-    const removed = unwrapAnnotation(editorRef.current, `[data-comment-id="${comment.anchor_id}"]`);
-    if (!removed) {
-      toast.error('Comment highlight was not found in the document.');
-      return;
+  const performDeleteComment = async () => {
+    const comment = deleteCommentDialog;
+    if (!comment || !editorRef.current) return;
+
+    const remainingForAnchor = comments.filter((item) => (
+      item.anchor_id === comment.anchor_id &&
+      item.comment_id !== comment.comment_id
+    ));
+
+    if (remainingForAnchor.length === 0) {
+      const removed = unwrapAnnotation(editorRef.current, `[data-comment-id="${comment.anchor_id}"]`);
+      if (!removed) {
+        toast.error('Comment highlight was not found in the document.');
+        return;
+      }
     }
 
     const updatedContent = getEditorHtml();
@@ -401,6 +504,20 @@ const DocumentEditorPage = () => {
         base_version_id: currentVersionId
       });
       setComments((current) => current.filter((item) => item.comment_id !== comment.comment_id));
+      setAnnotationPopover((current) => {
+        if (!current || current.anchorId !== comment.anchor_id) return current;
+
+        const nextComments = (current.comments || []).filter((item) => (
+          item.comment_id !== comment.comment_id
+        ));
+
+        if (nextComments.length === 0) return null;
+
+        return {
+          ...current,
+          comments: nextComments
+        };
+      });
       setCurrentVersionId(response.data.version_id);
       const nextContent = response.data.content || updatedContent;
       syncEditorHtml(nextContent);
@@ -410,12 +527,18 @@ const DocumentEditorPage = () => {
         last_version_id: response.data.version_id
       }));
       setContent(nextContent);
+      setDeleteCommentDialog(null);
       toast.success('Comment deleted');
     } catch (error) {
       console.error('Failed to delete comment:', error);
-      toast.error(error.response?.data?.message || 'Failed to delete comment');
+      toast.error(
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        'Failed to delete comment'
+      );
       await loadDocument();
       await refreshAnnotations();
+      setDeleteCommentDialog(null);
     }
   };
 
@@ -485,6 +608,102 @@ const DocumentEditorPage = () => {
       toast.error(error.response?.data?.message || 'Failed to unlock text');
       await loadDocument();
       await refreshAnnotations();
+    }
+  };
+
+  const handleEditorAnnotationClick = (event) => {
+    const commentElement = event.target.closest?.('[data-comment-id]');
+    if (commentElement && editorRef.current?.contains(commentElement)) {
+      return;
+    }
+
+    const lockElement = event.target.closest?.('[data-lock-id]');
+    if (lockElement && editorRef.current?.contains(lockElement)) {
+      const lock = locks.find((item) => (
+        item.lock_id === lockElement.getAttribute('data-lock-id')
+      ));
+      if (!lock) return;
+
+      event.preventDefault();
+      if (canLock) {
+        handleUnlockText(lock);
+      } else {
+        toast.error('Only the document owner can unlock this text');
+      }
+    }
+  };
+
+  const handleAnnotationHover = (event) => {
+    const annotation = event.target.closest?.('[data-comment-id], [data-lock-id]');
+    if (!annotation || !editorRef.current?.contains(annotation)) {
+      setAnnotationPopover(null);
+      return;
+    }
+
+    const rect = annotation.getBoundingClientRect();
+    const isLock = annotation.hasAttribute('data-lock-id');
+    const anchorId = annotation.getAttribute(isLock ? 'data-lock-id' : 'data-comment-id');
+    const preferredLeft = rect.left;
+    const maxLeft = window.innerWidth - 380;
+    const anchorComments = isLock
+      ? []
+      : comments.filter((item) => item.anchor_id === anchorId);
+
+    setAnnotationPopover({
+      type: annotation.getAttribute('data-tooltip-type'),
+      body: annotation.getAttribute('data-tooltip-body'),
+      meta: annotation.getAttribute('data-tooltip-meta'),
+      action: annotation.getAttribute('data-tooltip-action'),
+      variant: isLock ? 'lock' : 'comment',
+      anchorId,
+      comments: anchorComments,
+      top: rect.bottom + 10,
+      left: Math.max(16, Math.min(preferredLeft, maxLeft))
+    });
+  };
+
+  const hideAnnotationPopover = (event) => {
+    const nextTarget = event.relatedTarget;
+    if (nextTarget?.closest?.('[data-comment-id], [data-lock-id], .annotation-popover')) {
+      return;
+    }
+    setAnnotationPopover(null);
+  };
+
+  const handleEditorBeforeInput = () => {
+    moveCaretOutOfProtectedPosition(editorRef.current);
+  };
+
+  const handleEditorKeyDown = (event) => {
+    if (
+      event.key.length === 1 ||
+      event.key === 'Enter' ||
+      event.key === 'Tab'
+    ) {
+      moveCaretOutOfProtectedPosition(editorRef.current);
+    }
+  };
+
+  const handlePopoverAction = () => {
+    if (!annotationPopover) return;
+
+    if (annotationPopover.variant === 'comment') {
+      const comment = comments.find((item) => item.anchor_id === annotationPopover.anchorId);
+      if (comment) {
+        handleDeleteComment(comment);
+        setAnnotationPopover(null);
+      }
+      return;
+    }
+
+    const lock = locks.find((item) => item.lock_id === annotationPopover.anchorId);
+    if (!lock) return;
+
+    if (canLock) {
+      handleUnlockText(lock);
+      setAnnotationPopover(null);
+    } else {
+      toast.error('Only the document owner can unlock this text');
     }
   };
 
@@ -558,20 +777,6 @@ const DocumentEditorPage = () => {
     }
   };
 
-  const focusComment = (comment) => {
-    const found = focusAnnotation(editorRef.current, `[data-comment-id="${comment.anchor_id}"]`);
-    if (!found) {
-      toast.error('That commented text is no longer visible in the editor.');
-    }
-  };
-
-  const focusLock = (lock) => {
-    const found = focusAnnotation(editorRef.current, `[data-lock-id="${lock.lock_id}"]`);
-    if (!found) {
-      toast.error('That locked text is no longer visible in the editor.');
-    }
-  };
-
   if (loading) {
     return (
       <DashboardLayout>
@@ -613,118 +818,211 @@ const DocumentEditorPage = () => {
           />
         </div>
 
-        <div className="editor-workspace">
-          <div className="editor-container">
+        <div className="editor-container">
+          <div
+            ref={editorRef}
+            className={`document-editor ${!canEdit ? 'read-only' : ''}`}
+            contentEditable={canEdit}
+            suppressContentEditableWarning={true}
+            data-placeholder="Start typing..."
+            spellCheck={false}
+            onBeforeInput={handleEditorBeforeInput}
+            onInput={handleContentChange}
+            onKeyDown={handleEditorKeyDown}
+            onClick={handleEditorAnnotationClick}
+            onMouseOver={handleAnnotationHover}
+            onMouseOut={hideAnnotationPopover}
+            onMouseUp={handleCursorChange}
+            onKeyUp={handleCursorChange}
+          />
+
+          {!canEdit && (
+            <div className="view-only-banner">
+              You have view access. Ask an owner for edit permission to make changes.
+            </div>
+          )}
+
+          {Object.entries(cursors).map(([userId, data]) => (
             <div
-              ref={editorRef}
-              className={`document-editor ${!canEdit ? 'read-only' : ''}`}
-              contentEditable={canEdit}
-              suppressContentEditableWarning={true}
-              data-placeholder="Start typing..."
-              spellCheck={false}
-              onBeforeInput={() => moveCaretOutOfAnnotation(editorRef.current)}
-              onInput={handleContentChange}
-              onMouseUp={handleCursorChange}
-              onKeyUp={handleCursorChange}
-            />
-
-            {!canEdit && (
-              <div className="view-only-banner">
-                You have view access. Ask an owner for edit permission to make changes.
+              key={userId}
+              className="remote-cursor"
+              style={{
+                position: 'absolute',
+                top: data.position ? `${data.position.selectionStart}px` : 0,
+                left: 0
+              }}
+            >
+              <div className="cursor-label">
+                {data.user_name || `User ${userId}`}
+                {typingUsers.has(String(userId)) && ' is typing...'}
               </div>
-            )}
+            </div>
+          ))}
+        </div>
 
-            {Object.entries(cursors).map(([userId, data]) => (
-              <div
-                key={userId}
-                className="remote-cursor"
-                style={{
-                  position: 'absolute',
-                  top: data.position ? `${data.position.selectionStart}px` : 0,
-                  left: 0
-                }}
-              >
-                <div className="cursor-label">
-                  {data.user_name || `User ${userId}`}
-                  {typingUsers.has(String(userId)) && ' is typing...'}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <aside className="annotation-sidebar">
-            <section className="annotation-panel">
-              <div className="annotation-panel-header">
-                <h2>Selected Text Comments</h2>
-                <span>{comments.length}</span>
-              </div>
-              {comments.length === 0 ? (
-                <p className="annotation-empty">Select text and use Comment to attach feedback.</p>
-              ) : (
-                comments.map((comment) => (
-                  <article key={comment.comment_id} className="annotation-card">
-                    <button
-                      type="button"
-                      className="annotation-quote"
-                      onClick={() => focusComment(comment)}
-                    >
-                      "{comment.selected_text}"
-                    </button>
-                    <p>{comment.body}</p>
-                    <div className="annotation-meta">
-                      <span>{comment.user_name || 'Unknown user'}</span>
-                      <button
-                        type="button"
-                        className="annotation-delete"
-                        onClick={() => handleDeleteComment(comment)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </article>
-                ))
-              )}
-            </section>
-
-            <section className="annotation-panel">
-              <div className="annotation-panel-header">
-                <h2>Locked Text</h2>
-                <span>{locks.length}</span>
-              </div>
-              {locks.length === 0 ? (
-                <p className="annotation-empty">
-                  {canLock
-                    ? 'Select text and use Lock Text to make it immutable for everyone.'
-                    : 'The owner has not locked any text yet.'}
-                </p>
-              ) : (
-                locks.map((lock) => (
-                  <article key={lock.lock_id} className="annotation-card lock-card">
-                    <button
-                      type="button"
-                      className="annotation-quote"
-                      onClick={() => focusLock(lock)}
-                    >
-                      "{lock.selected_text}"
-                    </button>
-                    <div className="annotation-meta">
-                      <span>{lock.created_by_name || 'Owner lock'}</span>
-                      {canLock && (
+        {annotationPopover && (
+          <div
+            className={`annotation-popover ${annotationPopover.variant}`}
+            style={{
+              top: annotationPopover.top,
+              left: annotationPopover.left
+            }}
+            onMouseLeave={() => setAnnotationPopover(null)}
+          >
+            <div className="annotation-popover-header">
+              <span className="annotation-popover-type">{annotationPopover.type}</span>
+              <span className="annotation-popover-dot" />
+            </div>
+            {annotationPopover.variant === 'comment' ? (
+              <>
+                <div className="annotation-thread">
+                  {(annotationPopover.comments || []).map((comment) => (
+                    <article key={comment.comment_id} className="annotation-thread-item">
+                      <p>{comment.body}</p>
+                      <div>
+                        <span>{comment.user_name || 'Unknown user'}</span>
                         <button
                           type="button"
-                          className="annotation-delete"
-                          onClick={() => handleUnlockText(lock)}
+                          className="annotation-popover-action comment"
+                          onClick={() => {
+                            handleDeleteComment(comment);
+                            setAnnotationPopover(null);
+                          }}
                         >
-                          Unlock
+                          <FiTrash2 />
+                          <span>Delete</span>
                         </button>
-                      )}
-                    </div>
-                  </article>
-                ))
-              )}
-            </section>
-          </aside>
-        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+                <div className="annotation-popover-footer">
+                  <span>{(annotationPopover.comments || []).length} comment(s)</span>
+                  <button
+                    type="button"
+                    className="annotation-popover-action add"
+                    onClick={() => handleAddCommentToAnchor(annotationPopover.anchorId)}
+                  >
+                    <FiPlus />
+                    <span>Add comment</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="annotation-popover-body">{annotationPopover.body}</p>
+                <div className="annotation-popover-footer">
+                  <span>{annotationPopover.meta}</span>
+                  <button
+                    type="button"
+                    className={`annotation-popover-action ${annotationPopover.variant}`}
+                    onClick={handlePopoverAction}
+                  >
+                    <FiUnlock />
+                    <span>{annotationPopover.action}</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {commentDialog && (
+          <div className="modal-overlay" onClick={closeCommentDialog}>
+            <form className="comment-modal" onSubmit={submitCommentDialog} onClick={(e) => e.stopPropagation()}>
+              <div className="comment-modal-header">
+                <div>
+                  <span className="comment-modal-kicker">
+                    <FiMessageSquare />
+                    Comment
+                  </span>
+                  <h2>{commentDialog.mode === 'new' ? 'Add comment' : 'Add another comment'}</h2>
+                </div>
+                <button type="button" className="modal-close" onClick={closeCommentDialog}>
+                  <FiX />
+                </button>
+              </div>
+
+              <div className="comment-modal-selection">
+                <span>Selected text</span>
+                <p>{commentDialog.selectedText}</p>
+              </div>
+
+              <label className="comment-modal-label" htmlFor="comment-body">
+                Your comment
+              </label>
+              <textarea
+                id="comment-body"
+                value={commentDialog.text}
+                onChange={(event) => setCommentDialog((current) => (
+                  current ? { ...current, text: event.target.value } : current
+                ))}
+                placeholder="Write your note here..."
+                autoFocus
+                rows={5}
+              />
+
+              <div className="comment-modal-actions">
+                <button type="button" className="comment-modal-secondary" onClick={closeCommentDialog}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="comment-modal-primary"
+                  disabled={commentDialog.submitting}
+                >
+                  {commentDialog.submitting ? 'Adding...' : 'Add comment'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {deleteCommentDialog && (
+          <div className="modal-overlay" onClick={() => setDeleteCommentDialog(null)}>
+            <div className="comment-modal delete-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="comment-modal-header">
+                <div>
+                  <span className="comment-modal-kicker danger">
+                    <FiTrash2 />
+                    Delete
+                  </span>
+                  <h2>Delete this comment?</h2>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close"
+                  onClick={() => setDeleteCommentDialog(null)}
+                >
+                  <FiX />
+                </button>
+              </div>
+
+              <div className="delete-comment-preview">
+                <p>{deleteCommentDialog.body}</p>
+                <span>By {deleteCommentDialog.user_name || 'Unknown user'}</span>
+              </div>
+
+              <div className="comment-modal-actions">
+                <button
+                  type="button"
+                  className="comment-modal-secondary"
+                  onClick={() => setDeleteCommentDialog(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="comment-modal-danger"
+                  onClick={performDeleteComment}
+                >
+                  <FiTrash2 />
+                  Delete comment
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {showShareModal && (
           <div className="modal-overlay" onClick={() => setShowShareModal(false)}>

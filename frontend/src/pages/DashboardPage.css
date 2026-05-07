@@ -39,6 +39,7 @@
 .document-card {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   min-height: 240px;
   background: #ffffff;
   border: 1px solid #d9e2ec;
@@ -60,13 +61,15 @@
 }
 
 .document-card-header h3 {
+  min-width: 0;
   color: #102a43;
   font-size: 1.15rem;
   margin: 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .document-actions {
+  flex-shrink: 0;
   display: flex;
   gap: 0.45rem;
 }
@@ -97,13 +100,22 @@
 
 .document-preview {
   flex: 1;
+  min-width: 0;
   margin-bottom: 1rem;
+  overflow: hidden;
 }
 
 .document-preview p {
   color: #52606d;
   line-height: 1.65;
   margin: 0;
+  display: -webkit-box;
+  max-height: 6.6em;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .empty-preview {
@@ -123,12 +135,20 @@
 .document-meta {
   display: inline-flex;
   align-items: center;
+  min-width: 0;
   gap: 0.45rem;
   color: #7b8794;
   font-size: 0.86rem;
 }
 
+.document-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .history-link {
+  flex-shrink: 0;
   background: none;
   border: none;
   color: #0f766e;

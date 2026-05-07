@@ -10,7 +10,7 @@ class DocumentComment(db.Model):
     comment_id = db.Column(db.Integer, primary_key=True)
     doc_id = db.Column(db.Integer, db.ForeignKey('documents.doc_id'), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.user_id'), nullable=False, index=True)
-    anchor_id = db.Column(db.String(64), nullable=False, unique=True, index=True)
+    anchor_id = db.Column(db.String(64), nullable=False, index=True)
     selected_text = db.Column(db.Text, nullable=False)
     body = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

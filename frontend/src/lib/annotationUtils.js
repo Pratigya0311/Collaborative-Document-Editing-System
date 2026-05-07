@@ -10,19 +10,22 @@ const serializeFragment = (fragment) => {
   return container.innerHTML;
 };
 
-const selectionTouchesExistingAnnotation = (editor, range) => {
+const selectionTouchesExistingAnnotation = (editor, range, type) => {
   const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
     ? range.startContainer
     : range.startContainer.parentElement;
   const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
     ? range.endContainer
     : range.endContainer.parentElement;
+  const blockedSelector = type === 'lock'
+    ? '[data-lock-id]'
+    : '[data-lock-id], [data-comment-id]';
 
-  if (startElement?.closest?.('[data-lock-id], [data-comment-id]')) return true;
-  if (endElement?.closest?.('[data-lock-id], [data-comment-id]')) return true;
+  if (startElement?.closest?.(blockedSelector)) return true;
+  if (endElement?.closest?.(blockedSelector)) return true;
 
   const fragment = range.cloneContents();
-  return Boolean(fragment.querySelector?.('[data-lock-id], [data-comment-id]'));
+  return Boolean(fragment.querySelector?.(blockedSelector));
 };
 
 export const getSelectionSnapshot = (editor) => {
@@ -49,14 +52,46 @@ export const getSelectionSnapshot = (editor) => {
   };
 };
 
+export const getSelectedCommentAnchor = (editor) => {
+  const selection = window.getSelection();
+  if (!editor || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null;
+  }
+
+  const range = selection.getRangeAt(0);
+  if (!selectionBelongsToEditor(editor, range)) {
+    return null;
+  }
+
+  const startElement = range.startContainer.nodeType === Node.ELEMENT_NODE
+    ? range.startContainer
+    : range.startContainer.parentElement;
+  const endElement = range.endContainer.nodeType === Node.ELEMENT_NODE
+    ? range.endContainer
+    : range.endContainer.parentElement;
+  const startComment = startElement?.closest?.('[data-comment-id]');
+  const endComment = endElement?.closest?.('[data-comment-id]');
+
+  if (startComment && startComment === endComment) {
+    return startComment.getAttribute('data-comment-id');
+  }
+
+  const fragmentComment = range.cloneContents().querySelector?.('[data-comment-id]');
+  return fragmentComment?.getAttribute('data-comment-id') || null;
+};
+
 export const wrapSelectionWithAnnotation = (editor, type, id) => {
   const snapshot = getSelectionSnapshot(editor);
   if (!snapshot) {
     return { error: 'Select some text first.' };
   }
 
-  if (selectionTouchesExistingAnnotation(editor, snapshot.range)) {
-    return { error: 'Selections that already contain a comment or lock cannot be wrapped again.' };
+  if (selectionTouchesExistingAnnotation(editor, snapshot.range, type)) {
+    return {
+      error: type === 'lock'
+        ? 'This selected text is already locked.'
+        : 'This selected text already has a comment'
+    };
   }
 
   const wrapper = window.document.createElement('span');
@@ -110,7 +145,16 @@ export const moveCaretAfterElement = (element) => {
   return true;
 };
 
-export const moveCaretOutOfAnnotation = (editor) => {
+const isCaretAtEndOfElement = (range, element) => {
+  if (!range || !element) return false;
+
+  const probe = range.cloneRange();
+  probe.selectNodeContents(element);
+  probe.setStart(range.startContainer, range.startOffset);
+  return probe.toString().length === 0;
+};
+
+export const moveCaretOutOfProtectedPosition = (editor) => {
   const selection = window.getSelection();
   if (!editor || !selection || selection.rangeCount === 0) return false;
 
@@ -119,10 +163,19 @@ export const moveCaretOutOfAnnotation = (editor) => {
 
   const node = range.startContainer;
   const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-  const annotation = element?.closest?.('[data-comment-id], [data-lock-id]');
-  if (!annotation || !editor.contains(annotation)) return false;
+  const lock = element?.closest?.('[data-lock-id]');
+  if (lock && editor.contains(lock)) {
+    return moveCaretAfterElement(lock);
+  }
 
-  return moveCaretAfterElement(annotation);
+  const comment = element?.closest?.('[data-comment-id]');
+  if (!comment || !editor.contains(comment)) return false;
+
+  if (isCaretAtEndOfElement(range, comment)) {
+    return moveCaretAfterElement(comment);
+  }
+
+  return false;
 };
 
 export const repairCommentBoundaries = (editor, comments = []) => {
@@ -178,16 +231,39 @@ export const getMissingCommentAnchors = (editor, comments = []) => {
   ));
 };
 
-export const decorateEditorAnnotations = (editor) => {
+export const decorateEditorAnnotations = (editor, comments = [], locks = [], canLock = false) => {
   if (!editor) return;
 
+  const commentsByAnchor = new Map(
+    comments.map((comment) => [comment.anchor_id, comment])
+  );
+  const locksById = new Map(
+    locks.map((lock) => [lock.lock_id, lock])
+  );
+
   editor.querySelectorAll('[data-lock-id]').forEach((element) => {
+    const lock = locksById.get(element.getAttribute('data-lock-id'));
+    const owner = lock?.created_by_name || 'Owner';
+    const action = canLock ? 'Click to unlock.' : 'Only the owner can unlock it.';
+
     element.setAttribute('contenteditable', 'false');
-    element.setAttribute('title', 'Locked by owner');
+    element.removeAttribute('title');
+    element.setAttribute('data-tooltip-type', 'Locked text');
+    element.setAttribute('data-tooltip-body', 'Protected from editing');
+    element.setAttribute('data-tooltip-meta', `Locked by ${owner}`);
+    element.setAttribute('data-tooltip-action', canLock ? 'Unlock' : action);
   });
 
   editor.querySelectorAll('[data-comment-id]').forEach((element) => {
-    element.setAttribute('title', 'Commented selection');
+    const comment = commentsByAnchor.get(element.getAttribute('data-comment-id'));
+    const author = comment?.user_name || 'Someone';
+    const body = comment?.body || 'Commented selection';
+
+    element.removeAttribute('title');
+    element.setAttribute('data-tooltip-type', 'Comment');
+    element.setAttribute('data-tooltip-body', body);
+    element.setAttribute('data-tooltip-meta', `By ${author}`);
+    element.setAttribute('data-tooltip-action', 'Delete');
   });
 };
 

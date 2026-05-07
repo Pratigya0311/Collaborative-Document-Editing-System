@@ -85,9 +85,6 @@ def create_comment(doc_id):
     if not anchor:
         return jsonify({'error': 'Invalid request', 'message': 'Selected text anchor was not found'}), 400
 
-    if DocumentComment.query.filter_by(anchor_id=anchor_id).first():
-        return jsonify({'error': 'Invalid request', 'message': 'This selected text already has a comment'}), 400
-
     try:
         new_version, _ = transaction_manager.save_document_version(
             doc_id=doc_id,
@@ -142,17 +139,26 @@ def delete_comment(comment_id):
     if not document:
         return jsonify({'error': 'Document not found'}), 404
 
-    is_owner = document.created_by == current_user_id
-    if comment.user_id != current_user_id and not is_owner:
-        return jsonify({'error': 'Only the author or owner can delete this comment'}), 403
+    if not _can_access_document(document, current_user_id, require_edit=True):
+        return jsonify({
+            'error': 'Access denied',
+            'message': 'You need edit access to delete comments.'
+        }), 403
 
     data = request.get_json() or {}
     content = data.get('content', '')
-    content = annotation_service.unwrap_span(
-        content,
-        annotation_service.COMMENT_ATTR,
-        comment.anchor_id
-    )
+    remaining_anchor_comments = DocumentComment.query.filter(
+        DocumentComment.doc_id == comment.doc_id,
+        DocumentComment.anchor_id == comment.anchor_id,
+        DocumentComment.comment_id != comment.comment_id
+    ).count()
+
+    if remaining_anchor_comments == 0:
+        content = annotation_service.unwrap_span(
+            content,
+            annotation_service.COMMENT_ATTR,
+            comment.anchor_id
+        )
 
     try:
         new_version, _ = transaction_manager.save_document_version(
